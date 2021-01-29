@@ -121,7 +121,7 @@ api.get('/download', (req, res) => {
 })
 
 app.use('/api', api);
-app.use('/', express.static('dist'));
+app.use('/', express.static('../webui/dist'));
 app.use('/videos', express.static(path));
 
 app.listen(port, () => console.log(`Example app listening at http://localhost:${port}`));
