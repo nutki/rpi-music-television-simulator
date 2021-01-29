@@ -1,0 +1,27 @@
+{
+  "name": "mpv_serv",
+  "version": "1.0.0",
+  "description": "",
+  "main": "./src/index.jsx",
+  "browserslist": "> 5%, not dead",
+  "dependencies": {
+    "@material-ui/core": "^4.11.0",
+    "babel-loader": "^8.1.0",
+    "babel-preset-es2017": "^6.24.1",
+    "babel-preset-es2018": "^1.0.0",
+    "babel-preset-es2019": "^1.0.0",
+    "material-table": "^1.63.1",
+    "material-ui": "^0.20.2",
+    "react": "^16.13.1",
+    "react-dom": "^16.13.1",
+    "react-scripts": "^3.4.1",
+    "webpack-cli": "^3.3.12",
+    "webpack-dev-server": "^3.11.0"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC"
+}
