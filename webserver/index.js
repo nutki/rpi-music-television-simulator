@@ -144,7 +144,7 @@ const channelsQue = new ProcessingQue(async () => {
     .filter(f => f.isFile() && f.name.match(/\.(mkv|mp4|mov)$/))
     .map(f => path + "/" + f.name + "\n");
   const content = "#1\n" + files.join("");
-  await writeFile("channels.txt", content);
+  await writeFile("../channels.txt", content);
   await pingPlayer();
   console.log("regenerating done");
 });
