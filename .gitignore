@@ -67,3 +67,4 @@ webserver/inotify
 
 #node
 node_modules/
+webui/dist/main.js

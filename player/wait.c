@@ -175,8 +175,7 @@ void dispmanx_close() {
    DBusConnection* conn;
    DBusError err;
 void dbus_init() {
-  int ret;
-   // initialiset the errors
+   int ret;
    dbus_error_init(&err);
 
    // connect to the system bus and check for errors
@@ -189,17 +188,6 @@ void dbus_init() {
       printf("--0\n");
       exit(1);
    }
-
-   // request our name on the bus
-//    ret = dbus_bus_request_name(conn, "test.method.caller", DBUS_NAME_FLAG_REPLACE_EXISTING , &err);
-//    if (dbus_error_is_set(&err)) {
-//       fprintf(stderr, "Name Error (%s)\n", err.message);
-//       dbus_error_free(&err);
-//    }
-//    if (DBUS_REQUEST_NAME_REPLY_PRIMARY_OWNER != ret) {
-//       printf("--1\n");
-// //      exit(1);
-//    }
 }
 
 int64_t query(char* param)
