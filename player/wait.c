@@ -695,6 +695,12 @@ char *handle_requests() {
   return 0;
 }
 
+int getchar2() {
+  char c = 0;
+  read(0, &c, 1);
+  return c;
+}
+
 int main(int argc, char *argv[]) {
   read_channels("channels.txt", channels);
   print_channels();
@@ -741,7 +747,7 @@ int main(int argc, char *argv[]) {
           dispmanx_alpha((int)(max * 200));
         }
         int keycode = 0;
-        while ((keycode = getchar()) > 0) {
+        while ((keycode = getchar2()) > 0) {
           printf("GOT %d\n", keycode);
           if (keycode == 'a' || keycode == 'd') {
             if (keycode == 'a') channel_prev();
