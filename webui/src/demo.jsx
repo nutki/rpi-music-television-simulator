@@ -1,9 +1,10 @@
 import React from 'react';
-import MaterialTable from 'material-table';
+import MaterialTable from '@material-table/core';
 import AppBar from "@material-ui/core/AppBar";
 import Tabs from "@material-ui/core/Tabs";
 import Tab from "@material-ui/core/Tab";
 import TextField from '@material-ui/core/TextField';
+import Badge from '@material-ui/core/Badge';
 
 const columns = [
   { title: 'Artist', field: 'meta.artist' },
@@ -15,7 +16,7 @@ const columns = [
   { title: 'Year', field: 'meta.year', /*type: 'numeric'*/ },
   { title: 'Director', field: 'meta.director' },
   { title: 'Label', field: 'meta.label', searchable: false },
-  { title: 'Added', field: 'videoTimeStamp', editable: false,
+  { title: 'Added', field: 'videoTimeStamp', editable: 'never',
     render: a => tsToString(a.videoTimeStamp),
     customSort: (a, b) => (a.videoTimeStamp||0)-(b.videoTimeStamp||0),
   }
@@ -71,7 +72,7 @@ function FormDialog({ open, value, onConfirm, onClose, onChange}) {
         <DialogTitle id="form-dialog-title">Add Download URLs</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            Paste vide URLs to download below
+            Paste video URLs to download below
           </DialogContentText>
           <TextField
             autoFocus
@@ -140,14 +141,8 @@ function QueryDialog({ id, onClose, onRowUpdate }) {
       </Dialog>
   );
 }
-function DownloadsTable() {
-  const [data, setData] = React.useState();
-  const load = () => void fetch('/api/download').then(r => r.json()).then(r => setData(r));
-  React.useEffect(load, []);
-  useInterval(load, 1000);
-  const [open, setOpen] = React.useState(false);
+function DownloadModal({open, setOpen}) {
   const [value, setValue] = React.useState("");
-
   const handleConfirm = () => {
     postData('/api/download', { urls: value.split('\n').filter(Boolean) });
     setValue("");
@@ -165,6 +160,17 @@ function DownloadsTable() {
       onConfirm={handleConfirm}
       onChange={setValue}
     />
+  </>;
+}
+function useDownloads() {
+  const [data, setData] = React.useState();
+  const load = () => void fetch('/api/download').then(r => r.json()).then(r => setData(r));
+  React.useEffect(load, []);
+  useInterval(load, 1000);
+  return data;
+}
+function DownloadsTable({onAdd, data}) {
+  return <>
     <MaterialTable
       title="Pending Downloads"
       localization={{body: {emptyDataSourceMessage: "No pending downloads"}}}
@@ -179,7 +185,7 @@ function DownloadsTable() {
       data={data}
       actions={[
         {
-          onClick: () => setOpen(true),
+          onClick: onAdd,
           icon: 'add',
           tooltip: "Add URLs",
           isFreeAction: true,
@@ -267,17 +273,23 @@ function VideoDetail({id, onRowUpdate}) {
   </div>{dialogOpen && <QueryDialog id={data.id} onRowUpdate={onRowUpdate} onClose={() => setDialogOpen(false)}/>}</>;
 }
 
+function Panel({visible, children}) {
+  return <div hidden={!visible}>{children}</div>;
+}
+
 let cnt = 0;
 
 
 
 export default function MaterialTableDemo() {
+  const [open, setOpen] = React.useState(false);
   const [data, setData] = React.useState();
   const [panelIdx, setPanelIdx] = React.useState(0);
   console.log('Rendering', cnt++);
   const load = () => void fetch('/api/list').then(r => r.json()).then(r => setData(r));
   React.useEffect(load, []);
-//  useInterval(load, 5000);
+  useInterval(load, 5000);
+  const downloads = useDownloads();
 
   async function onRowUpdate(newData) {
     await postData('/api/update', newData);
@@ -287,9 +299,8 @@ export default function MaterialTableDemo() {
     await postData('/api/delete', { id: oldData.id });
     setData((prevState) => prevState.filter(row => row.id != oldData.id));
   }
-  let panel = null;
-  if (panelIdx === 0) {
-    panel = <MaterialTable
+  const panel0 = <Panel visible={panelIdx === 0}>
+    <MaterialTable
       title=""
       columns={columns}
       isLoading={!data}
@@ -309,19 +320,25 @@ export default function MaterialTableDemo() {
           icon: 'refresh',
           tooltip: 'Reload',
           isFreeAction: true,
+        },
+        {
+          onClick: () => setOpen(true),
+          icon: 'add',
+          tooltip: "Add Download URLs",
+          isFreeAction: true,
         }
       ]}
       editable={{
         onRowUpdate,
         onRowDelete,
       }}
-      detailPanel={row => <VideoDetail id={row.id} onRowUpdate={onRowUpdate}/>}
-    />;
-  } else if (panelIdx === 2) {
-    panel = <>
-      <DownloadsTable/>
-    </>;
-  }
+      detailPanel={row => <VideoDetail id={row.rowData.id} onRowUpdate={onRowUpdate}/>}
+    />
+  </Panel>;
+  const panel2 = <Panel visible={panelIdx === 2}>
+    <DownloadsTable onAdd={() => setOpen(true)} data={downloads}/>
+  </Panel>;
+  const downloadCount = downloads?.length || undefined;
 
   return (
     <>
@@ -335,10 +352,12 @@ export default function MaterialTableDemo() {
         >
           <Tab label="Videos" />
           <Tab label="Channels" />
-          <Tab label="Downloads" />
+          <Tab label={<Badge badgeContent={downloadCount} color="secondary">Downloads</Badge>} />
         </Tabs>
       </AppBar>
-      {panel}
+      {panel0}
+      {panel2}
+      <DownloadModal open={open} setOpen={setOpen} />
     </>
   );
 }
