@@ -13,6 +13,48 @@
 #include "image.h"
 #include <termios.h>
 
+/* Playlist setup */
+
+#define MAX_PLAYLIST_CALC (64*1024)
+uint64_t rand_seed;
+uint32_t rand_next () {
+  rand_seed = rand_seed * 6364136223846793005ll + 1;
+  return rand_seed >> 32;
+}
+
+
+
+static int random_order[MAX_PLAYLIST_CALC];
+static int playlist_len = 1;
+static int playlist_is_random;
+static void playlist_init(int len, int random, int channel) {
+  playlist_len = len;
+  playlist_is_random = random;
+  rand_seed = channel * 7 + 12345;
+  if (playlist_len > 0) for (int i = 0; i < MAX_PLAYLIST_CALC; i++) {
+    random_order[i] = rand_next() % playlist_len;
+  }
+}
+int playlist_update(int newlen, int oldpos, int newpos) {
+  // todo
+  return 0; // new pos
+}
+int playlist_set_random(int random) {
+  playlist_is_random = random;
+  return 0; // new pos
+}
+int playlist_current(int pos) {
+  if (!playlist_len) return 0;
+  if (playlist_is_random) {
+    return random_order[pos % MAX_PLAYLIST_CALC];
+  } else {
+    return pos % playlist_len;
+  }
+}
+
+
+/* Channel setup END */
+
 #define ELEMENT_CHANGE_LAYER (1<<0)
 #define ELEMENT_CHANGE_OPACITY (1<<1)
 #define ELEMENT_CHANGE_DEST_RECT (1<<2)
