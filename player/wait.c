@@ -70,8 +70,10 @@ static DISPMANX_ELEMENT_HANDLE_T element;
 static uint64_t last_strap_alpha = 0;
 #define SCREENX 1920
 #define SCREENY 1080
+static int screenX, screenY;
 #define STRAP_EXT ".strap.png"
 static char empty[SCREENY * 4];
+
 void load_strap(char *path) {
 	// Load image file to structure Image
   char *dotptr = strrchr(path, '.');
@@ -84,20 +86,21 @@ void load_strap(char *path) {
 	VC_RECT_T bmpRect;
 	VC_RECT_T zeroRect;
 	vc_dispmanx_rect_set(&bmpRect, 0, 0, SCREENX, SCREENY);
-	vc_dispmanx_rect_set(&zeroRect, SCREENX, 0, 1, 1);
 	Image image = { 0 };
 	if (loadPNG(strapname, &image) == false || image.buffer == NULL ||
 		image.width != SCREENX || image.height != SCREENY || image.type != VC_IMAGE_RGBA32)
 	{
 		fprintf(stderr, "Unable to load %s\n", strapname);
                 // TODO clear resource buffer
+  	vc_dispmanx_rect_set(&zeroRect, screenX, 0, 1, 1);
     vc_dispmanx_element_change_attributes(update, element, ELEMENT_CHANGE_DEST_RECT, 0, 0, &zeroRect, 0, 0, 0);
 	} else {
 	// Copy bitmap data to vc
     vc_dispmanx_resource_write_data(
       resource, image.type, image.pitch, image.buffer, &bmpRect);
     // Free bitmap data
-    vc_dispmanx_element_change_attributes(update, element, ELEMENT_CHANGE_DEST_RECT, 0, 0, &bmpRect, 0, 0, 0);
+    vc_dispmanx_rect_set(&zeroRect, 0, 0, screenX, screenY);
+	  vc_dispmanx_element_change_attributes(update, element, ELEMENT_CHANGE_DEST_RECT, 0, 0, &zeroRect, 0, 0, 0);
     if (image.buffer) free(image.buffer);
   }
 	int result = vc_dispmanx_update_submit_sync(update); // This waits for vsync?
@@ -115,6 +118,12 @@ void dispmanx_init() {
 		= vc_dispmanx_display_open(displayNumber);
 	assert(display != 0);
 
+  DISPMANX_MODEINFO_T display_info;
+  int ret = vc_dispmanx_display_get_info(display, &display_info);
+  assert(ret == 0);
+  screenX = display_info.width;
+  screenY = display_info.height;
+  printf("Screen size: %d %d\n", display_info.width, display_info.height);
 
 	// Create a resource and copy bitmap to resource
 	uint32_t vc_image_ptr = 0;
@@ -131,7 +140,7 @@ void dispmanx_init() {
 	// Calculate source and destination rect values
 	VC_RECT_T srcRect, dstRect;
 	vc_dispmanx_rect_set(&srcRect, 0, 0, SCREENX << 16, SCREENY << 16);
-	vc_dispmanx_rect_set(&dstRect, 0, 0, SCREENX, SCREENY);
+	vc_dispmanx_rect_set(&dstRect, 0, 0, screenX, screenY);
 
 	// Add element to vc
         last_strap_alpha = 0;
