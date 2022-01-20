@@ -89,7 +89,7 @@ const downloadQue = new ProcessingQue(async (name) => {
     if (!await exists(tmpDir)) {
       await mkdir(tmpDir);
     }
-    const youtubeDl = spawn('../youtube-dl', [ `-o${tmpDir}/%(title)s.%(ext)s`, '-f137+251/136+251/135+251/best', '--newline', name]);
+    const youtubeDl = spawn('../yt-dlp', [ `-o${tmpDir}/%(title)s.%(ext)s`, '-f137+251/136+251/135+251/best', '--newline', name]);
     youtubeDl.stdout.on('data', data => {
       const line = data.toString();
       const [ , pct ] = line.match(/\b(\d{1,3}(\.\d+))%/) || [];
