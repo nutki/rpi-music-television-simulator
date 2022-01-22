@@ -10,7 +10,7 @@ const columns = [
   { title: 'Artist', field: 'meta.artist' },
   { title: 'Title', field: 'meta.name',
     customFilterAndSearch: (f, r) =>
-      (r.name?.toLowerCase().includes(f.toLowerCase()) || r.id?.toLowerCase().includes(f.toLowerCase()))
+      (r.meta?.name?.toLowerCase()?.includes(f.toLowerCase()) || r.id?.toLowerCase()?.includes(f.toLowerCase()))
   },
   { title: 'Album', field: 'meta.album' },
   { title: 'Year', field: 'meta.year', /*type: 'numeric'*/ },
