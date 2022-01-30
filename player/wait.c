@@ -70,7 +70,7 @@ static DISPMANX_ELEMENT_HANDLE_T element;
 static uint64_t last_strap_alpha = 0;
 #define SCREENX 1920
 #define SCREENY 1080
-static int screenX, screenY;
+static int screenX, screenY, screenXoffset;
 #define STRAP_EXT ".strap.png"
 static char empty[SCREENY * 4];
 
@@ -123,6 +123,9 @@ void dispmanx_init() {
   assert(ret == 0);
   screenX = display_info.width;
   screenY = display_info.height;
+  int aspectX = 4;
+  int aspectY = 3;
+  screenXoffset = (screenX - screenX * aspectY * 16 / 9 / aspectX) / 2;
   printf("Screen size: %d %d\n", display_info.width, display_info.height);
 
 	// Create a resource and copy bitmap to resource
@@ -140,7 +143,7 @@ void dispmanx_init() {
 	// Calculate source and destination rect values
 	VC_RECT_T srcRect, dstRect;
 	vc_dispmanx_rect_set(&srcRect, 0, 0, SCREENX << 16, SCREENY << 16);
-	vc_dispmanx_rect_set(&dstRect, 0, 0, screenX, screenY);
+	vc_dispmanx_rect_set(&dstRect, screenXoffset, 0, screenX - 2 * screenXoffset, screenY);
 
 	// Add element to vc
         last_strap_alpha = 0;
@@ -501,7 +504,7 @@ int start_player(char *f, int start) {
   }
   if (cpid == 0) {
     printf("Child PID is %ld\n", (long) getpid());
-    execlp("omxplayer.bin","omxplayer", "--no-keys", "--no-osd", "-b", start_param, f, 0);
+    execlp("omxplayer.bin","omxplayer", "--no-keys", "--no-osd", "-b", "--aspect-mode", "fill", start_param, f, 0);
     perror("exec omxplayer\n");
     exit(EXIT_FAILURE);
   }
