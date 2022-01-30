@@ -55,8 +55,7 @@ int playlist_current(int pos) {
 
 pid_t cpid = 0;
 int state = 0;
-int64_t duration = 0, position = 0;
-int playlist_pos = 0;
+int64_t duration = 0;
 #define PLAYER_STOPPED 0
 #define PLAYER_STARTING 1
 #define PLAYER_RUNNING 2
@@ -64,6 +63,7 @@ int playlist_pos = 0;
 
 int start_player(char *f, int start) {
   char start_param[32];
+  start /= 1000000;
   sprintf(start_param, "-l%02d:%02d:%02d", start/3600, start/60%60, start%60);
   cpid = fork();
   if (cpid == -1) {
@@ -73,7 +73,7 @@ int start_player(char *f, int start) {
   }
   if (cpid == 0) {
     printf("Child PID is %ld\n", (long) getpid());
-    execlp("omxplayer.bin","omxplayer", "--no-keys", "--no-osd", "-b", "--aspect-mode", "fill", start_param, f, 0);
+    execlp("omxplayer.bin","omxplayer", "--no-keys", "--no-osd", "--aspect-mode", "fill", start_param, f, 0);
     perror("exec omxplayer\n");
     exit(EXIT_FAILURE);
   }
@@ -127,9 +127,9 @@ struct channel {
 struct channel_state {
   int index;
   int position;
-  int seed; // ?
 } channel_state[MAXCHANNELS];
 int current_channel = 1;
+int current_position = 0;
 
 int read_channels(char *path, struct channel *channels) {
   char linebuf[1024], *s;
@@ -174,6 +174,34 @@ int read_channels(char *path, struct channel *channels) {
   return 0;
 }
 
+#define CHANNEL_STATE_FILE "channels_state.txt"
+void read_channels_state() {
+  FILE *f = fopen(CHANNEL_STATE_FILE, "r");
+  if (!f) return;
+  int ch_nr, ch_pos, ch_fpos;
+  fscanf(f, "%d", &ch_nr);
+  if (!(ch_nr < 0 || ch_nr >= MAXCHANNELS)) current_channel = ch_nr;
+  while(fscanf(f, "%d%d%d", &ch_nr, &ch_pos, &ch_fpos) == 3) {
+    printf("%d %d %d\n", ch_nr, ch_pos, ch_fpos);
+    if (ch_nr < 0 || ch_nr >= MAXCHANNELS) continue;
+    channel_state[ch_nr].index = ch_pos;
+    channel_state[ch_nr].position = ch_fpos;
+  }
+  fclose(f);
+  current_position = channel_state[current_channel].position;
+}
+void save_channels_state() {
+  FILE *f = fopen(CHANNEL_STATE_FILE, "w");
+  if (!f) return;
+  fprintf(f, "%d\n", current_channel);
+  for (int i = 0; i < MAXCHANNELS; i++) {
+    if (channels[i].length) {
+      fprintf(f, "%d %d %d\n", i, channel_state[i].index, channel_state[i].position);
+    }
+  }
+  fclose(f);
+}
+
 void free_channels(struct channel *channels) {
   for (int i = 0; i < MAXCHANNELS; i++) {
     for (int j = 0; j < channels[i].length; j++) if (channels[i].length) {
@@ -201,6 +229,7 @@ void reload_channels() {
   }
   free_channels(channels);
   memcpy(channels, new_channels, sizeof(new_channels));
+  save_channels_state();
 }
 
 void print_channels() {
@@ -226,6 +255,8 @@ struct channel_entry *channel_next() {
   if (!ch->length) return 0;
   s->index = (s->index + 1) % ch->length;
   s->position = 0;
+  current_position = 0;
+  save_channels_state();
   return ch->playlist + s->index;
 }
 struct channel_entry *channel_prev() {
@@ -234,6 +265,8 @@ struct channel_entry *channel_prev() {
   if (!ch->length) return 0;
   s->index = (s->index + ch->length - 1) % ch->length;
   s->position = 0;
+  current_position = 0;
+  save_channels_state();
   return ch->playlist + s->index;
 }
 struct channel_entry *channel_up(int current_pos) {}
@@ -271,6 +304,7 @@ static void handle_sighup(int n) {
 }
 static void signalHandler(int signalNumber) {
   printf("Got signal\n");
+  save_channels_state();
   dbus_quit();
   dispmanx_close();
   term_cleanup();
@@ -310,6 +344,7 @@ int main(int argc, char *argv[]) {
   blank_background();
   dbus_init();
   term_setup();
+  read_channels_state();
   for(int64_t frame = 0;; frame++) {
     if (state != PLAYER_STOPPED) check_ifstopped();
     switch (state) {
@@ -317,7 +352,7 @@ int main(int argc, char *argv[]) {
         ;
         struct channel_entry *ce = changing_video ? channel_current_entry() : channel_next();
         changing_video = false;
-        start_player(ce->path, 0);
+        start_player(ce->path, current_position);
         custom_show_strap_pos = -STRAP_DURATION_SEC * 1000LL * 1000LL;
         dispmanx_alpha(0);
         load_strap(ce->path);
@@ -327,14 +362,14 @@ int main(int argc, char *argv[]) {
         if (duration > 0) state = PLAYER_RUNNING;
         break;
       case PLAYER_RUNNING:
-        position = query("Position");
-        if (position > 0) {
-          printf("%10.3f/%10.3f\r", position / 1000000., duration / 1000000.); fflush(stdout);
-          double dpos = position / 1000./1000.;
-          double a = strap_alpha(position, 2 * 1000 * 1000);
-          double b = strap_alpha(position, duration - (2 + STRAP_DURATION_SEC) * 1000 * 1000);
+        current_position = query("Position");
+        if (current_position > 0) {
+          channel_state[current_channel].position = current_position;
+          printf("%10.3f/%10.3f\r", current_position / 1000000., duration / 1000000.); fflush(stdout);
+          double a = strap_alpha(current_position, 2 * 1000 * 1000);
+          double b = strap_alpha(current_position, duration - (2 + STRAP_DURATION_SEC) * 1000 * 1000);
           double max = a > b ? a : b;
-          double c = strap_alpha(position, custom_show_strap_pos);
+          double c = strap_alpha(current_position, custom_show_strap_pos);
           if (c > max) max = c;
           dispmanx_alpha((int)(max * 200));
         }
@@ -353,7 +388,7 @@ int main(int argc, char *argv[]) {
           }
           if (keycode == 'i') {
             //if (custom_show_strap_pos + STRAP_DURATION_SEC * 1000LL * 1000LL >= position)
-              custom_show_strap_pos = position;
+              custom_show_strap_pos = current_position;
           }
           if (keycode == ',' || keycode == '.') {
             dbus_seek(keycode == ',' ? -30 * 1000000LL : 30 * 1000000LL);
@@ -366,10 +401,6 @@ int main(int argc, char *argv[]) {
           dbus_quit();
           state = PLAYER_STOPPING;
           changing_video = true;
-        }
-        if (position > 2000 * 1000000LL) {
-          dbus_quit();
-          state = PLAYER_STOPPING;
         }
         break;
     }
