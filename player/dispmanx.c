@@ -29,7 +29,6 @@ void load_strap(char *path) {
   char *strapname = alloca(dotpos + sizeof(STRAP_EXT));
   memcpy(strapname, path, dotpos);
   memcpy(strapname + dotpos, STRAP_EXT, sizeof(STRAP_EXT));
-  printf("%ld size %s\n", sizeof(STRAP_EXT), strapname);
   DISPMANX_UPDATE_HANDLE_T update = vc_dispmanx_update_start(0);
 	VC_RECT_T bmpRect;
 	VC_RECT_T zeroRect;
@@ -74,7 +73,6 @@ void dispmanx_init() {
   int aspectX = 4;
   int aspectY = 3;
   screenXoffset = (screenX - screenX * aspectY * 16 / 9 / aspectX) / 2;
-  printf("Screen size: %d %d\n", display_info.width, display_info.height);
 
 	// Create a resource and copy bitmap to resource
 	uint32_t vc_image_ptr = 0;

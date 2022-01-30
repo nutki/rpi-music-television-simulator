@@ -117,13 +117,13 @@ int64_t dbus_action(char *action_name)
    dbus_uint32_t level;
    dbus_int64_t val = -1;
 
-   printf(">>> CMD %s\n", action_name);
+   // printf(">>> CMD %s\n", action_name);
    // create a new method call and check for errors
    msg = dbus_message_new_method_call("org.mpris.MediaPlayer2.omxplayer", // target for the method call
                                       "/org/mpris/MediaPlayer2", // object to call on
                                       "org.mpris.MediaPlayer2.Player", // interface to call on
                                       action_name); // method name
-   printf(">>> END\n");
+   // printf(">>> END\n");
    if (NULL == msg) {
       fprintf(stderr, "Message Null\n");
       return -1;
@@ -179,7 +179,7 @@ int64_t dbus_action(char *action_name)
       dbus_message_iter_get_basic(&args, &val);
 
 
-   printf("Got Reply: %lld, %s\n", val, stat);
+   // printf("Got Reply: %lld, %s\n", val, stat);
 
    // free reply
    dbus_message_unref(msg);
@@ -256,7 +256,7 @@ int64_t dbus_seek(int64_t seek)
       dbus_message_iter_get_basic(&args, &val);
 
 
-   printf("Got Reply: %lld, %s\n", val, stat);
+   // printf("Got Reply: %lld, %s\n", val, stat);
 
    // free reply
    dbus_message_unref(msg);
