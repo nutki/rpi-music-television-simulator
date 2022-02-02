@@ -65,7 +65,6 @@ int start_player(char *f, int start) {
   char start_param[32];
   start /= 1000000;
   sprintf(start_param, "-l%02d:%02d:%02d", start/3600, start/60%60, start%60);
-  osd_text(f + 18, 0);
   cpid = fork();
   if (cpid == -1) {
     perror("fork");
@@ -291,6 +290,7 @@ int channel_set_file(char *file) {
     if (!strncmp(ch->playlist[i].path, file, strlen(file)) && is_video_suffix(ch->playlist[i].path + strlen(file))) {
       s->index = i;
       s->position = 0;
+      current_position = 0;
       printf("found at index %d\n", i);
       return 1;
     }
@@ -327,7 +327,17 @@ char *handle_requests() {
   }
   return 0;
 }
-
+int osd_timeout = 0;
+void osd_show(const char * s) {
+  if (osd_timeout) osd_text_clear();
+  osd_timeout = 60;
+  osd_text(s, 0);
+}
+void osd_update() {
+  if (osd_timeout) {
+    if(!--osd_timeout) osd_text_clear();
+  }
+}
 int main(int argc, char *argv[]) {
   read_channels("channels.txt", channels);
   print_channels();
@@ -347,6 +357,7 @@ int main(int argc, char *argv[]) {
   term_setup();
   read_channels_state();
   for(int64_t frame = 0;; frame++) {
+    osd_update();
     if (state != PLAYER_STOPPED) check_ifstopped();
     switch (state) {
       case PLAYER_STOPPED:
@@ -393,6 +404,7 @@ int main(int argc, char *argv[]) {
           }
           if (keycode == ',' || keycode == '.') {
             dbus_seek(keycode == ',' ? -30 * 1000000LL : 30 * 1000000LL);
+            osd_show(keycode == ',' ? "SEEK -30s" : "SEEK +30s");
           }
           if (keycode == 'q') {
             signalHandler(0);

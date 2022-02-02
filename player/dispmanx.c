@@ -134,9 +134,6 @@ void dispmanx_init() {
 		DISPMANX_PROTECTION_NONE, NULL, NULL, DISPMANX_NO_ROTATE);
 
 	assert(element != 0);
-  osd_text("Ð► CHANNEL 1", 0);
-  osd_text_clear();
-  osd_text("Ð►► CHL 1", 1);
   
 
 	// Notify vc that update is complete
