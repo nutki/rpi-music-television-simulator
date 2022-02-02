@@ -16,7 +16,7 @@ void term_setup() {
   new = old;
 //	new.c_lflag &= ~((tcflag_t)(ICANON | ECHO | ISIG));
 	new.c_lflag &= ~((tcflag_t)(ICANON | ECHO));
-  printf("TERMIOS %d %d %04x\n", new.c_cc[VMIN], new.c_cc[VTIME], new.c_iflag);
+//  printf("TERMIOS %d %d %04x\n", new.c_cc[VMIN], new.c_cc[VTIME], new.c_iflag);
 //	new.c_iflag     = 0;
 	new.c_cc[VMIN]  = 0;
 	new.c_cc[VTIME] = 0; /* 0.1 sec intercharacter timeout */

@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <bcm_host.h>
 #include "image.h"
+#include "vcrfont.h"
 
 #define ELEMENT_CHANGE_LAYER (1<<0)
 #define ELEMENT_CHANGE_OPACITY (1<<1)
@@ -21,6 +22,11 @@ static uint64_t last_strap_alpha = 0;
 #define SCREENY 1080
 static int screenX, screenY, screenXoffset;
 #define STRAP_EXT ".strap.png"
+
+static DISPMANX_RESOURCE_HANDLE_T osd_resource;
+static DISPMANX_ELEMENT_HANDLE_T osd_element;
+#define OSD_W 320
+#define OSD_H 256
 
 void load_strap(char *path) {
 	// Load image file to structure Image
@@ -53,6 +59,25 @@ void load_strap(char *path) {
 	int result = vc_dispmanx_update_submit_sync(update); // This waits for vsync?
 	assert(result == 0);
 }
+static uint16_t osdbuf[OSD_W * VCR_FONT_H];
+static void put_pixel(int x, int y, int v) {
+  osdbuf[x + y * OSD_W] = v ? 0x0f0f : 0;
+}
+void osd_text(const char * s, int align) {
+	VC_RECT_T osdRect2;
+  int rendered_width = render_text(s, put_pixel, OSD_W);
+  int offset = align ? (OSD_W - rendered_width) / align : 0;
+	vc_dispmanx_rect_set(&osdRect2, 0, 0, rendered_width, VCR_FONT_H);
+    vc_dispmanx_resource_write_data(
+      osd_resource, VC_IMAGE_RGBA16, OSD_W * 2, &osdbuf, &osdRect2);  
+}
+void osd_text_clear() {
+	VC_RECT_T osdRect2;
+  memset(osdbuf, 0, sizeof(osdbuf));
+ 	vc_dispmanx_rect_set(&osdRect2, 0, 0, OSD_W, VCR_FONT_H);
+    vc_dispmanx_resource_write_data(
+      osd_resource, VC_IMAGE_RGBA16, OSD_W * 2, &osdbuf, &osdRect2);  
+}
 void dispmanx_init() {
 	int32_t layer = 10;
 	u_int32_t displayNumber = 0;
@@ -70,16 +95,20 @@ void dispmanx_init() {
   assert(ret == 0);
   screenX = display_info.width;
   screenY = display_info.height;
-  int aspectX = 4;
-  int aspectY = 3;
+  int aspectX = 16;
+  int aspectY = 9;
   screenXoffset = (screenX - screenX * aspectY * 16 / 9 / aspectX) / 2;
+  int screenOsdXoffset = (screenX - screenX * aspectY * 4 / 3 / aspectX) / 2;
 
 	// Create a resource and copy bitmap to resource
 	uint32_t vc_image_ptr = 0;
 	resource = vc_dispmanx_resource_create(
 		VC_IMAGE_RGBA32, SCREENX, SCREENY, &vc_image_ptr);
+	osd_resource = vc_dispmanx_resource_create(
+		VC_IMAGE_RGBA16, OSD_W, OSD_H, &vc_image_ptr);
 
 	assert(resource != 0);
+	assert(osd_resource != 0);
 
 
 	// Notify vc that an update is takng place
@@ -87,9 +116,12 @@ void dispmanx_init() {
 	assert(update != 0);
 
 	// Calculate source and destination rect values
-	VC_RECT_T srcRect, dstRect;
+	VC_RECT_T srcRect, dstRect, osdSrcRect, osdDstRect;
+  int screenOsdX = screenX - 2 * screenOsdXoffset;
 	vc_dispmanx_rect_set(&srcRect, 0, 0, SCREENX << 16, SCREENY << 16);
+	vc_dispmanx_rect_set(&osdSrcRect, 0, 0, OSD_W << 16, OSD_H << 16);
 	vc_dispmanx_rect_set(&dstRect, screenXoffset, 0, screenX - 2 * screenXoffset, screenY);
+	vc_dispmanx_rect_set(&osdDstRect, screenOsdXoffset + screenOsdX/18, screenY / 18, screenOsdX * 8 / 9, screenY * 8 / 9);
 
 	// Add element to vc
         last_strap_alpha = 0;
@@ -97,8 +129,15 @@ void dispmanx_init() {
 	element = vc_dispmanx_element_add(
 		update, display, layer, &dstRect, resource, &srcRect,
 		DISPMANX_PROTECTION_NONE, &alpha, NULL, DISPMANX_NO_ROTATE);
+	osd_element = vc_dispmanx_element_add(
+		update, display, layer + 1, &osdDstRect, osd_resource, &osdSrcRect,
+		DISPMANX_PROTECTION_NONE, NULL, NULL, DISPMANX_NO_ROTATE);
 
 	assert(element != 0);
+  osd_text("Ð► CHANNEL 1", 0);
+  osd_text_clear();
+  osd_text("Ð►► CHL 1", 1);
+  
 
 	// Notify vc that update is complete
 	result = vc_dispmanx_update_submit_sync(update); // This waits for vsync?

@@ -1,4 +1,4 @@
-add_executable (mpvplayer wait.c loadpng.c dbus.c dispmanx.c terminput.c)
+add_executable (mpvplayer wait.c loadpng.c dbus.c dispmanx.c terminput.c vcrfont.c)
 find_library(LIB_BCM_HOST bcm_host PATHS /opt/vc/lib)
 target_link_libraries(mpvplayer ${LIB_BCM_HOST} png dbus-1)
 target_include_directories(mpvplayer PUBLIC

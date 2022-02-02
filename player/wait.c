@@ -65,6 +65,7 @@ int start_player(char *f, int start) {
   char start_param[32];
   start /= 1000000;
   sprintf(start_param, "-l%02d:%02d:%02d", start/3600, start/60%60, start%60);
+  osd_text(f + 18, 0);
   cpid = fork();
   if (cpid == -1) {
     perror("fork");
@@ -73,7 +74,7 @@ int start_player(char *f, int start) {
   }
   if (cpid == 0) {
     printf("Child PID is %ld\n", (long) getpid());
-    execlp("omxplayer.bin","omxplayer", "--no-keys", "--no-osd", "--aspect-mode", "fill", start_param, f, 0);
+    execlp("omxplayer.bin","omxplayer", "--no-keys", "--no-osd", "--aspect-mode", "letterbox", start_param, f, 0);
     perror("exec omxplayer\n");
     exit(EXIT_FAILURE);
   }
