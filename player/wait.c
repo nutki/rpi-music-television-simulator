@@ -61,6 +61,8 @@ int64_t duration = 0;
 #define PLAYER_RUNNING 2
 #define PLAYER_STOPPING 3
 
+int aspect_mode = 0;
+
 int start_player(char *f, int start) {
   char start_param[32];
   start /= 1000000;
@@ -73,7 +75,7 @@ int start_player(char *f, int start) {
   }
   if (cpid == 0) {
     printf("Child PID is %ld\n", (long) getpid());
-    execlp("omxplayer.bin","omxplayer", "--no-keys", "--no-osd", "--aspect-mode", "letterbox", start_param, f, 0);
+    execlp("omxplayer.bin","omxplayer", "--no-keys", "--no-osd", "--aspect-mode", aspect_mode ? "fill" : "letterbox", start_param, f, 0);
     perror("exec omxplayer\n");
     exit(EXIT_FAILURE);
   }
@@ -130,6 +132,12 @@ struct channel_state {
 } channel_state[MAXCHANNELS];
 int current_channel = 1;
 int current_position = 0;
+int crop_x = -1;
+int crop_y = -1;
+int crop_w = -1;
+int crop_h = -1;
+int video_width = -1;
+int video_height = -1;
 
 int read_channels(char *path, struct channel *channels) {
   char linebuf[1024], *s;
@@ -179,7 +187,7 @@ void read_channels_state() {
   FILE *f = fopen(CHANNEL_STATE_FILE, "r");
   if (!f) return;
   int ch_nr, ch_pos, ch_fpos;
-  fscanf(f, "%d", &ch_nr);
+  fscanf(f, "%d%d", &ch_nr, &aspect_mode);
   if (!(ch_nr < 0 || ch_nr >= MAXCHANNELS)) current_channel = ch_nr;
   while(fscanf(f, "%d%d%d", &ch_nr, &ch_pos, &ch_fpos) == 3) {
     printf("%d %d %d\n", ch_nr, ch_pos, ch_fpos);
@@ -193,7 +201,7 @@ void read_channels_state() {
 void save_channels_state() {
   FILE *f = fopen(CHANNEL_STATE_FILE, "w");
   if (!f) return;
-  fprintf(f, "%d\n", current_channel);
+  fprintf(f, "%d %d\n", current_channel, aspect_mode);
   for (int i = 0; i < MAXCHANNELS; i++) {
     if (channels[i].length) {
       fprintf(f, "%d %d %d\n", i, channel_state[i].index, channel_state[i].position);
@@ -338,6 +346,37 @@ void osd_update() {
     if(!--osd_timeout) osd_text_clear();
   }
 }
+void crop_cycle() {
+  if (video_height <= 0 || video_width <= 0) return;
+  int video_aspect = (video_height * 16 + video_width / 2)/ video_width;
+  if (crop_w < 0) crop_w = video_width;
+  if (crop_h < 0) crop_h = video_width;
+  int crop_aspect = (crop_h * 16 + crop_w/2) / crop_w;
+  int n_options = 1;
+  int options[3] = { video_aspect };
+  if (video_aspect != 12) options[n_options++] = 12;
+  if (video_aspect != 9) options[n_options++] = 9;
+  int current_aspect = 0;
+  for (int i = 0; i < n_options; i++) if (crop_aspect == options[i]) current_aspect = i;
+  int new_aspect = options[(current_aspect + 1) % n_options];
+  if (new_aspect == video_aspect) {
+    crop_w = video_width;
+    crop_h = video_height;
+    osd_show(video_aspect == 9 ? "NO CROP (16:9)" : video_aspect == 12 ? "NO CROP (4:3)" : "NO CROP");
+  } else {
+    if (new_aspect > video_aspect) {
+      crop_w = video_height * 16 / new_aspect;
+      crop_h = video_height;
+    } else {
+      crop_w = video_width;
+      crop_h = video_width * new_aspect / 16;
+    }
+    osd_show(new_aspect == 9 ? "CROP TO 16:9" : "CROP TO 4:3");
+  }
+  crop_x = (video_width - crop_w) / 2;
+  crop_y = (video_height - crop_h) / 2;
+  dbus_crop(crop_x, crop_y, crop_w + crop_x, crop_h + crop_y);
+}
 int main(int argc, char *argv[]) {
   read_channels("channels.txt", channels);
   print_channels();
@@ -364,6 +403,8 @@ int main(int argc, char *argv[]) {
         ;
         struct channel_entry *ce = changing_video ? channel_current_entry() : channel_next();
         changing_video = false;
+        // TODO initialize those based on the saved video settings
+        crop_x = -1, crop_y = -1, crop_w = -1, crop_h = 1;
         start_player(ce->path, current_position);
         custom_show_strap_pos = -STRAP_DURATION_SEC * 1000LL * 1000LL;
         dispmanx_alpha(0);
@@ -371,7 +412,11 @@ int main(int argc, char *argv[]) {
         break;
       case PLAYER_STARTING:
         duration = query("Duration");
-        if (duration > 0) state = PLAYER_RUNNING;
+        if (duration > 0) {
+          video_width = query("ResWidth");
+          video_height = query("ResHeight");
+          state = PLAYER_RUNNING;
+        }
         break;
       case PLAYER_RUNNING:
         current_position = query("Position");
@@ -408,6 +453,15 @@ int main(int argc, char *argv[]) {
           }
           if (keycode == 'q') {
             signalHandler(0);
+          }
+          if (keycode == 'c') {
+            crop_cycle();
+          }
+          if (keycode == 'x') {
+            aspect_mode = !aspect_mode;
+            dbus_aspect_mode(aspect_mode ? "fill" : "letterbox");
+            osd_show(aspect_mode ? "ASPECT: FILL FRAME" : "ASPECT: LETTERBOX");
+            save_channels_state();
           }
         }
         if (channel_set_file(handle_requests())) {
