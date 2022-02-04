@@ -62,11 +62,19 @@ int64_t duration = 0;
 #define PLAYER_STOPPING 3
 
 int aspect_mode = 0;
-
+int crop_x = -1;
+int crop_y = -1;
+int crop_w = -1;
+int crop_h = -1;
+int video_width = -1;
+int video_height = -1;
+int video_start_pos = 0;
+int video_end_pos = -1;
 int start_player(char *f, int start) {
-  char start_param[32];
+  char start_param[32], crop_param[128];
   start /= 1000000;
   sprintf(start_param, "-l%02d:%02d:%02d", start/3600, start/60%60, start%60);
+  sprintf(crop_param, "%d %d %d %d", crop_x, crop_y, crop_w + crop_x, crop_h + crop_y);
   cpid = fork();
   if (cpid == -1) {
     perror("fork");
@@ -75,7 +83,7 @@ int start_player(char *f, int start) {
   }
   if (cpid == 0) {
     printf("Child PID is %ld\n", (long) getpid());
-    execlp("omxplayer.bin","omxplayer", "--no-keys", "--no-osd", "--aspect-mode", aspect_mode ? "fill" : "letterbox", start_param, f, 0);
+    execlp("omxplayer.bin","omxplayer", "--no-keys", "--no-osd", "--aspect-mode", aspect_mode ? "fill" : "letterbox", start_param, f, crop_x>=0?"--crop": 0, crop_x>=0?crop_param: 0, 0);
     perror("exec omxplayer\n");
     exit(EXIT_FAILURE);
   }
@@ -132,12 +140,6 @@ struct channel_state {
 } channel_state[MAXCHANNELS];
 int current_channel = 1;
 int current_position = 0;
-int crop_x = -1;
-int crop_y = -1;
-int crop_w = -1;
-int crop_h = -1;
-int video_width = -1;
-int video_height = -1;
 
 int read_channels(char *path, struct channel *channels) {
   char linebuf[1024], *s;
@@ -181,6 +183,44 @@ int read_channels(char *path, struct channel *channels) {
   }
   return 0;
 }
+
+static char *conf_filename;
+#define CONF_EXT ".conf"
+void read_video_conf(const char *filename) {
+  crop_w = crop_h = crop_x = crop_y = -1;
+  video_start_pos = 0;
+  if (conf_filename) free(conf_filename);
+  char *dotptr = strrchr(filename, '.');
+  int dotpos = dotptr ? dotptr - filename : strlen(filename);
+  conf_filename = malloc(dotpos + sizeof(CONF_EXT));
+  memcpy(conf_filename, filename, dotpos);
+  memcpy(conf_filename + dotpos, CONF_EXT, sizeof(CONF_EXT));
+  FILE *f = fopen(conf_filename, "r");
+  if (!f) return;
+  char c;
+  printf("loading conf\n");
+  while (fscanf(f, " %c", &c) > 0) {
+    printf("Loading config %c\n", c);
+    if (c == 'C') {
+      fscanf(f, "%d%d%d%d", &crop_x, &crop_y, &crop_w, &crop_h);
+    }
+    if (c == 'S') {
+      fscanf(f, "%d", &video_start_pos);
+    }
+  }
+  printf("loading conf end\n");
+  fclose(f);
+}
+void save_video_conf() {
+  FILE *f = fopen(conf_filename, "w");
+  printf("CONF: %s\n", conf_filename);
+  if (!f) return;
+  if (crop_w >= 0 && (crop_w != video_width || crop_h != video_height)) fprintf(f, "C %d %d %d %d\n", crop_x, crop_y, crop_w, crop_h);
+  if (video_start_pos) fprintf(f, "S %d\n", video_start_pos);
+  if (video_end_pos) fprintf(f, "E %d\n", video_end_pos);
+  fclose(f);
+}
+
 
 #define CHANNEL_STATE_FILE "channels_state.txt"
 void read_channels_state() {
@@ -262,8 +302,9 @@ struct channel_entry *channel_next() {
   struct channel_state *s = channel_state + current_channel;
   if (!ch->length) return 0;
   s->index = (s->index + 1) % ch->length;
-  s->position = 0;
-  current_position = 0;
+  read_video_conf(ch->playlist[s->index].path);
+  s->position = video_start_pos * 1000;
+  current_position = video_start_pos * 1000;
   save_channels_state();
   return ch->playlist + s->index;
 }
@@ -272,8 +313,9 @@ struct channel_entry *channel_prev() {
   struct channel_state *s = channel_state + current_channel;
   if (!ch->length) return 0;
   s->index = (s->index + ch->length - 1) % ch->length;
-  s->position = 0;
-  current_position = 0;
+  read_video_conf(ch->playlist[s->index].path);
+  s->position = video_start_pos * 1000;
+  current_position = video_start_pos * 1000;
   save_channels_state();
   return ch->playlist + s->index;
 }
@@ -297,8 +339,10 @@ int channel_set_file(char *file) {
   for (int i = 0; i < ch->length; i++) {
     if (!strncmp(ch->playlist[i].path, file, strlen(file)) && is_video_suffix(ch->playlist[i].path + strlen(file))) {
       s->index = i;
-      s->position = 0;
-      current_position = 0;
+      read_video_conf(ch->playlist[s->index].path);
+      s->position = video_start_pos * 1000;
+      current_position = video_start_pos * 1000;
+      save_channels_state();
       printf("found at index %d\n", i);
       return 1;
     }
@@ -376,6 +420,22 @@ void crop_cycle() {
   crop_x = (video_width - crop_w) / 2;
   crop_y = (video_height - crop_h) / 2;
   dbus_crop(crop_x, crop_y, crop_w + crop_x, crop_h + crop_y);
+  save_video_conf();
+}
+int mark_video_start() {
+  video_start_pos = video_start_pos ? 0 : current_position / 1000;
+  char text[256];
+  sprintf(text, "START MARK: %d.%ds", video_start_pos / 1000, video_start_pos / 100 % 10);
+  osd_show(video_start_pos ? text : "START MARK RESET");
+  save_video_conf();
+}
+int mark_video_end() {
+  video_end_pos = video_end_pos >= 0 ? -1 : current_position / 1000;
+  char text[256];
+  sprintf(text, "END MARK: %d.%ds", video_end_pos / 1000, video_end_pos / 100 % 10);
+  osd_show(video_end_pos ? text : "END MARK RESET");
+  save_video_conf();
+  video_end_pos = -1;
 }
 int main(int argc, char *argv[]) {
   read_channels("channels.txt", channels);
@@ -403,8 +463,6 @@ int main(int argc, char *argv[]) {
         ;
         struct channel_entry *ce = changing_video ? channel_current_entry() : channel_next();
         changing_video = false;
-        // TODO initialize those based on the saved video settings
-        crop_x = -1, crop_y = -1, crop_w = -1, crop_h = 1;
         start_player(ce->path, current_position);
         custom_show_strap_pos = -STRAP_DURATION_SEC * 1000LL * 1000LL;
         dispmanx_alpha(0);
@@ -423,7 +481,7 @@ int main(int argc, char *argv[]) {
         if (current_position > 0) {
           channel_state[current_channel].position = current_position;
           printf("%10.3f/%10.3f\r", current_position / 1000000., duration / 1000000.); fflush(stdout);
-          double a = strap_alpha(current_position, 2 * 1000 * 1000);
+          double a = strap_alpha(current_position, 2 * 1000 * 1000 + video_start_pos * 1000);
           double b = strap_alpha(current_position, duration - (2 + STRAP_DURATION_SEC) * 1000 * 1000);
           double max = a > b ? a : b;
           double c = strap_alpha(current_position, custom_show_strap_pos);
@@ -463,11 +521,21 @@ int main(int argc, char *argv[]) {
             osd_show(aspect_mode ? "ASPECT: FILL FRAME" : "ASPECT: LETTERBOX");
             save_channels_state();
           }
+          if (keycode == 'b') {
+            mark_video_start();
+          }
+          if (keycode == 'n') {
+            mark_video_end();
+          }
         }
         if (channel_set_file(handle_requests())) {
           dbus_quit();
           state = PLAYER_STOPPING;
           changing_video = true;
+        }
+        if (video_end_pos != -1 && current_position >= video_end_pos * 1000) {
+          dbus_quit();
+          state = PLAYER_STOPPING;
         }
         break;
     }
