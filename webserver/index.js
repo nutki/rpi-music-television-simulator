@@ -14,7 +14,8 @@ const readdir = promisify(fs.readdir);
 const rename = promisify(fs.rename);
 const writeFile = promisify(fs.writeFile);
 const readFile = promisify(fs.readFile);
-const path = '/mnt/music videos';
+const unlink = promisify(fs.unlink);
+const path = '/media/SSD/music videos';
 const { getMetaForFilename, queryMeta } = require('./meta');
 
 const ProcessingQue = class {
@@ -75,6 +76,21 @@ api.post('/delete', (req, res) => {
   deleteentry(req.body.id);
   res.json({});
 });
+api.get('/channel', async (req, res) => {
+  res.json(await channels_list());
+});
+api.get('/channel/:id', async (req, res) => {
+  res.json(await channels_get_entries(req.body.id));
+});
+api.post('/channel/:id', async (req, res) => {
+  await channels_set_entries(req.body.id, req.body.name, req.body.entries);
+  res.json({});
+});
+api.delete('/channel/:id', async (req, res) => {
+  await channels_delete(req.body.id);
+  res.json({});
+});
+
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -142,9 +158,7 @@ const channelsQue = new ProcessingQue(async () => {
   console.log("(re-)generating channels.txt");
   const files = (await readdir(path, { withFileTypes: true }))
     .filter(f => f.isFile() && f.name.match(/\.(mkv|mp4|mov)$/))
-    .map(f => path + "/" + f.name + "\n");
-  const content = "#1\n" + files.join("");
-  await writeFile("../channels.txt", content);
+  await writeFile("../channels/1.txt", "\n" + files.map(f => f.name + "\n").join(""));
   await pingPlayer();
   console.log("regenerating done");
 });
@@ -153,6 +167,55 @@ inotify.stdout.on('data', data => lb.feed(data).map(line => JSON.parse(line)).fo
   if (ev.name.endsWith('.meta.json') && ev.type == '>') que.add(ev.name);
   if ((ev.name.endsWith('.mkv') || ev.name.endsWith('.mp4') || ev.name.endsWith('.mov')) && ev.type == '>')
     metaQue.add(ev.name);
-  if (ev.name.endsWith('.mkv') || ev.name.endsWith('.mp4') || ev.name.endsWith('.mp4'))
+  if (ev.name.endsWith('.mkv') || ev.name.endsWith('.mp4') || ev.name.endsWith('.mov'))
     channelsQue.add();
 }));
+
+
+const readChannels = async () => {
+  const channels = [];
+  let current_channel = 0;
+  const contents = await readFile("../channels.txt");
+  for (const line of contents.split("\n")) {
+    if (line[0] == '#') {
+      const [nr, name] = line.substring(1).split('\n',2);
+      current_channel = parseInt(nr);
+      channels[current_channel] = {
+        name,
+        entries: [],
+      };
+    }
+    if (line[0] == '/') {
+      channels[current_channel].entries.push(line.substring(1));
+    }
+  }
+  return channels;
+}
+
+const channels_list = async () => {
+  const channels = {};
+  for (const file of await readdir("../channels")) {
+    const [m, nr] = file.match(/^(\d+).txt$/);
+    if (m) {
+      const contents = await readFile("../channels/" + m).split("\n");
+      channels[nr] = { name: contents[0] || undefined, length: contents.length - 2 };
+    }
+  }
+  return channels;
+}
+const channels_get_entries = async (nr) => {
+  const entries = [];
+  const contents = await readFile("../channels/" + nr + ".txt").split("\n");
+  contents.shift();
+  for (const line of contnets) if (line) {
+    entries.push(line);
+  }
+  return entries;
+}
+const channels_set_entries = async (nr, name, entries) => {
+  const conentes = name + "\n" + entries.joint("\n") + "\n";
+  await writeFile("../channels/" + nr + ".txt", contents);
+}
+const channels_delete = async (nr) => {
+  await unlink("../channels/" + nr + ".txt");
+}
