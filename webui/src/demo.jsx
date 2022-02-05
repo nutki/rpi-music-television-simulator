@@ -5,6 +5,7 @@ import Tabs from "@material-ui/core/Tabs";
 import Tab from "@material-ui/core/Tab";
 import TextField from '@material-ui/core/TextField';
 import Badge from '@material-ui/core/Badge';
+import InputLabel from '@material-ui/core/InputLabel';
 
 const columns = [
   { title: 'Artist', field: 'meta.artist' },
@@ -273,6 +274,76 @@ function VideoDetail({id, onRowUpdate}) {
   </div>{dialogOpen && <QueryDialog id={data.id} onRowUpdate={onRowUpdate} onClose={() => setDialogOpen(false)}/>}</>;
 }
 
+function Channels({data}) {
+  const [ channelName, setChannelName ] = React.useState();
+  const [ channelIdx, setChannelIdx ] = React.useState(1);
+  const [ channelEntries, setChannelEntries ] = React.useState();
+  const loadChannel = (id) => {
+    setChannelEntries(undefined);
+    setChannelName("");
+    fetch('/api/channel/'+id).then(r => r.json()).then(r => {
+      setChannelName(r?.name || "");
+      setChannelEntries(r?.entries || [])
+    });
+  }
+  React.useEffect(() => loadChannel(channelIdx), [channelIdx]);
+  const channelData = React.useMemo(() => {
+    if (!channelEntries) return undefined;
+    const map = new Map(data?.map(({filename, meta}) => [filename, meta]));
+    console.log(map, channelEntries);
+    return channelEntries?.map(filename => ({filename, meta: map.get(filename) || { name: filename }}));
+  }, [channelEntries, data]);
+  const setChannel = (nr) => {
+    setChannelIdx(nr);
+  }
+  return <>
+  <div style={{
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+  }}>
+  <MaterialTable
+      title={null}
+      columns={[
+        { title: 'Name', field: 'meta.artist', render: (row => {
+          return (row.meta.artist || "") + " - " + (row.meta.name || "") + (row.meta.year ? ` (${row.meta.year})` : "");
+        }) },
+      ]}
+      isLoading={!data}
+      data={data}
+      actions={[
+        {
+          onClick: (ev, r) => {
+            channelEntries && setChannelEntries([...channelEntries, r.filename]);
+          },
+          icon: 'play_arrow',
+          tooltip: 'Add',
+        },
+      ]}
+      options={{
+        actionsColumnIndex: -1,
+      }}
+  />
+  <MaterialTable
+      title={<>
+        <InputLabel>CH</InputLabel>
+        <TextField value={channelIdx} style={{width:50, paddingRight: 10}} type="number" onChange={ev => setChannel(ev.target.value)}/>
+        <TextField value={channelName} onChange={ev => setChannelName(ev.target.value)} disabled={!data} />
+      </>}
+      columns={[
+        { title: 'Artist', field: 'meta.artist' },
+        { title: 'Title', field: 'meta.name' },
+        { title: 'Year', field: 'meta.year', /*type: 'numeric'*/ },
+      ]}
+      isLoading={!data}
+      data={channelData}
+      options={{
+        search: false,
+      }}
+  />
+    </div>
+  </>
+}
+
 function Panel({visible, children}) {
   return <div hidden={!visible}>{children}</div>;
 }
@@ -335,6 +406,9 @@ export default function MaterialTableDemo() {
       detailPanel={row => <VideoDetail id={row.rowData.id} onRowUpdate={onRowUpdate}/>}
     />
   </Panel>;
+  const panel1 = <Panel visible={panelIdx === 1}>
+    <Channels data={data} />
+  </Panel>;
   const panel2 = <Panel visible={panelIdx === 2}>
     <DownloadsTable onAdd={() => setOpen(true)} data={downloads}/>
   </Panel>;
@@ -356,6 +430,7 @@ export default function MaterialTableDemo() {
         </Tabs>
       </AppBar>
       {panel0}
+      {panel1}
       {panel2}
       <DownloadModal open={open} setOpen={setOpen} />
     </>

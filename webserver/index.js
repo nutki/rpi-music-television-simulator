@@ -80,10 +80,10 @@ api.get('/channel', async (req, res) => {
   res.json(await channels_list());
 });
 api.get('/channel/:id', async (req, res) => {
-  res.json(await channels_get_entries(req.body.id));
+  res.json(await channels_get_entries(req.params.id));
 });
 api.post('/channel/:id', async (req, res) => {
-  await channels_set_entries(req.body.id, req.body.name, req.body.entries);
+  await channels_set_entries(req.params.id, req.body.name, req.body.entries);
   res.json({});
 });
 api.delete('/channel/:id', async (req, res) => {
@@ -171,49 +171,29 @@ inotify.stdout.on('data', data => lb.feed(data).map(line => JSON.parse(line)).fo
     channelsQue.add();
 }));
 
-
-const readChannels = async () => {
-  const channels = [];
-  let current_channel = 0;
-  const contents = await readFile("../channels.txt");
-  for (const line of contents.split("\n")) {
-    if (line[0] == '#') {
-      const [nr, name] = line.substring(1).split('\n',2);
-      current_channel = parseInt(nr);
-      channels[current_channel] = {
-        name,
-        entries: [],
-      };
-    }
-    if (line[0] == '/') {
-      channels[current_channel].entries.push(line.substring(1));
-    }
-  }
-  return channels;
-}
-
 const channels_list = async () => {
   const channels = {};
   for (const file of await readdir("../channels")) {
     const [m, nr] = file.match(/^(\d+).txt$/);
     if (m) {
-      const contents = await readFile("../channels/" + m).split("\n");
+      const contents = (await readFile("../channels/" + m)).toString().split("\n");
       channels[nr] = { name: contents[0] || undefined, length: contents.length - 2 };
     }
   }
   return channels;
 }
 const channels_get_entries = async (nr) => {
-  const entries = [];
-  const contents = await readFile("../channels/" + nr + ".txt").split("\n");
-  contents.shift();
-  for (const line of contnets) if (line) {
-    entries.push(line);
+  const channel = { entries: [], name: "" };
+  if (!await exists("../channels/" + nr + ".txt")) return channel;
+  const contents = (await readFile("../channels/" + nr + ".txt")).toString().split("\n");
+  channel.name = contents.shift();
+  for (const line of contents) if (line) {
+    channel.entries.push(line);
   }
-  return entries;
+  return channel;
 }
 const channels_set_entries = async (nr, name, entries) => {
-  const conentes = name + "\n" + entries.joint("\n") + "\n";
+  const contents = name + "\n" + entries.joint("\n") + "\n";
   await writeFile("../channels/" + nr + ".txt", contents);
 }
 const channels_delete = async (nr) => {

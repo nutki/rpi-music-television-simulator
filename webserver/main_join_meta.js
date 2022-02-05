@@ -23,7 +23,7 @@ async function getmetas() {
     if (name) {
         const meta = readmeta(name);
         const stat = fs.statSync(path + "/" + f.name);
-        metas.push({ id: name, meta, videoTimeStamp: stat.ctimeMs });
+        metas.push({ id: name, meta, filename: f.name, videoTimeStamp: stat.ctimeMs });
     }
   };
   return metas;
