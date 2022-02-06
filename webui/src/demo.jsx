@@ -284,10 +284,19 @@ function VideoDetail({id, onRowUpdate}) {
   </div>{dialogOpen && <QueryDialog id={data.id} onRowUpdate={onRowUpdate} onClose={() => setDialogOpen(false)}/>}</>;
 }
 
+
+const channelSearch =  (f, r) => (
+  r.meta?.name?.toLowerCase()?.includes(f.toLowerCase()) ||
+  r.meta?.artist?.toLowerCase()?.includes(f.toLowerCase()) ||
+  r.meta?.album?.toLowerCase()?.includes(f.toLowerCase()) ||
+  r.meta?.director?.toLowerCase()?.includes(f.toLowerCase())
+);
+
 function Channels({data}) {
   const [ channelName, setChannelName ] = React.useState();
   const [ channelIdx, setChannelIdx ] = React.useState(1);
   const [ channelEntries, setChannelEntries ] = React.useState();
+  const tableRef = React.useRef();
   const loadChannel = (id) => {
     setChannelEntries(undefined);
     setChannelName("");
@@ -311,11 +320,13 @@ function Channels({data}) {
     gridTemplateColumns: "1fr 1fr",
   }}>
   <MaterialTable
+      tableRef={tableRef}
       title={null}
       columns={[
         { title: 'Name', field: 'meta.artist', render: (row => {
-          return (row.meta.artist || "") + " - " + (row.meta.name || "") + (row.meta.year ? ` (${row.meta.year})` : "");
-        }) },
+          return (row.meta.artist || "") + " - " + (row.meta.name || "");
+        }), customFilterAndSearch: channelSearch },
+        { title: 'Year', field: 'meta.year' },
       ]}
       isLoading={!data}
       data={data}
@@ -329,6 +340,7 @@ function Channels({data}) {
         },
         {
           onClick: (ev) => {
+            channelEntries && setChannelEntries([...channelEntries, ...tableRef.current.state.data.map(v => v.filename)])
           },
           icon: 'play_arrow',
           tooltip: 'Add All',
@@ -351,7 +363,7 @@ function Channels({data}) {
           return (row.meta.artist || "") + " - " + (row.meta.name || "") + (row.meta.year ? ` (${row.meta.year})` : "");
         }) },
       ]}
-      isLoading={!data}
+      isLoading={!data || !channelData}
       data={channelData}
       options={{
         pageSize:10,
@@ -397,7 +409,7 @@ function Channels({data}) {
         },
         {
           onClick: (ev) => {
-            setChannelEntries(undefined);
+            setChannelEntries([]);
             setChannelName("");
             deleteData(`api/channel/${channelIdx}`);
           },
