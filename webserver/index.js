@@ -87,7 +87,7 @@ api.post('/channel/:id', async (req, res) => {
   res.json({});
 });
 api.delete('/channel/:id', async (req, res) => {
-  await channels_delete(req.body.id);
+  await channels_delete(req.params.id);
   res.json({});
 });
 
@@ -193,9 +193,9 @@ const channels_get_entries = async (nr) => {
   return channel;
 }
 const channels_set_entries = async (nr, name, entries) => {
-  const contents = name + "\n" + entries.joint("\n") + "\n";
+  const contents = name + "\n" + entries.join("\n") + "\n";
   await writeFile("../channels/" + nr + ".txt", contents);
 }
 const channels_delete = async (nr) => {
-  await unlink("../channels/" + nr + ".txt");
+  if (await exists("../channels/" + nr + ".txt")) await unlink("../channels/" + nr + ".txt");
 }
