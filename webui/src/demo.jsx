@@ -33,6 +33,16 @@ async function postData(url = '', data = {}) {
   });
   return response.json(); // parses JSON response into native JavaScript objects
 }
+async function deleteData(url = '', data = {}) {
+  // Default options are marked with *
+  const response = await fetch(url, {
+    method: 'DELETE',
+    cache: 'no-cache',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+  return response.json(); // parses JSON response into native JavaScript objects
+}
 
 const uri = (strings, ...values) =>
   strings.map((s, i) => s + (values[i] === undefined ? '' : encodeURIComponent(values[i]))).join('');
@@ -291,7 +301,7 @@ function Channels({data}) {
     if (!channelEntries) return undefined;
     const map = new Map(data?.map(({filename, meta}) => [filename, meta]));
     console.log(map, channelEntries);
-    return channelEntries?.map(filename => ({filename, meta: map.get(filename) || { name: filename }}));
+    return channelEntries?.map((filename, idx) => ({filename, idx, meta: map.get(filename) || { name: filename }}));
   }, [channelEntries, data]);
   const setChannel = (nr) => {
     setChannelIdx(nr);
@@ -318,8 +328,16 @@ function Channels({data}) {
           icon: 'play_arrow',
           tooltip: 'Add',
         },
+        {
+          onClick: (ev) => {
+          },
+          icon: 'play_arrow',
+          tooltip: 'Add All',
+          isFreeAction: true,
+        },
       ]}
       options={{
+        pageSize:10,
         actionsColumnIndex: -1,
       }}
   />
@@ -337,8 +355,58 @@ function Channels({data}) {
       isLoading={!data}
       data={channelData}
       options={{
+        pageSize:10,
         search: false,
       }}
+      actions={[
+        {
+          onClick: (ev, r) => {
+            channelEntries && setChannelEntries(channelEntries.filter((v, i) => i !== r.idx));
+          },
+          icon: 'clear',
+          tooltip: 'Remove',
+        },
+        {
+          onClick: (ev, r) => {
+            if (!channelEntries || r.idx == 0) return;
+            const newEntries = Array.from(channelEntries);
+            newEntries[r.idx] = channelEntries[r.idx - 1];
+            newEntries[r.idx - 1] = channelEntries[r.idx];
+            setChannelEntries(newEntries);
+          },
+          icon: 'angle-up',
+          tooltip: 'Up',
+        },
+        {
+          onClick: (ev, r) => {
+            if (!channelEntries || r.idx == channelEntries.length - 1) return;
+            const newEntries = Array.from(channelEntries);
+            newEntries[r.idx] = channelEntries[r.idx + 1];
+            newEntries[r.idx + 1] = channelEntries[r.idx];
+            setChannelEntries(newEntries);
+          },
+          icon: 'angle-down',
+          tooltip: 'Down',
+        },
+        {
+          onClick: (ev) => {
+            channelEntries && postData(`api/channel/${channelIdx}`, { name: channelName, entries: channelEntries });
+          },
+          icon: 'save',
+          tooltip: 'Save',
+          isFreeAction: true,
+        },
+        {
+          onClick: (ev) => {
+            setChannelEntries(undefined);
+            setChannelName("");
+            deleteData(`api/channel/${channelIdx}`);
+          },
+          icon: 'delete',
+          tooltip: 'Delete',
+          isFreeAction: true,
+        },
+      ]}
   />
     </div>
   </>
