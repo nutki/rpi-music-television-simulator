@@ -300,7 +300,6 @@ function Channels({data}) {
   const channelData = React.useMemo(() => {
     if (!channelEntries) return undefined;
     const map = new Map(data?.map(({filename, meta}) => [filename, meta]));
-    console.log(map, channelEntries);
     return channelEntries?.map((filename, idx) => ({filename, idx, meta: map.get(filename) || { name: filename }}));
   }, [channelEntries, data]);
   const setChannel = (nr) => {
@@ -348,9 +347,9 @@ function Channels({data}) {
         <TextField value={channelName} onChange={ev => setChannelName(ev.target.value)} disabled={!data} />
       </>}
       columns={[
-        { title: 'Artist', field: 'meta.artist' },
-        { title: 'Title', field: 'meta.name' },
-        { title: 'Year', field: 'meta.year', /*type: 'numeric'*/ },
+        { title: 'Name', sorting: false, field: 'meta.artist', render: (row => {
+          return (row.meta.artist || "") + " - " + (row.meta.name || "") + (row.meta.year ? ` (${row.meta.year})` : "");
+        }) },
       ]}
       isLoading={!data}
       data={channelData}
@@ -374,7 +373,7 @@ function Channels({data}) {
             newEntries[r.idx - 1] = channelEntries[r.idx];
             setChannelEntries(newEntries);
           },
-          icon: 'angle-up',
+          icon: 'arrow_upward',
           tooltip: 'Up',
         },
         {
@@ -385,7 +384,7 @@ function Channels({data}) {
             newEntries[r.idx + 1] = channelEntries[r.idx];
             setChannelEntries(newEntries);
           },
-          icon: 'angle-down',
+          icon: 'arrow_downward',
           tooltip: 'Down',
         },
         {
