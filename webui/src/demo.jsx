@@ -291,12 +291,28 @@ const channelSearch =  (f, r) => (
   r.meta?.album?.toLowerCase()?.includes(f.toLowerCase()) ||
   r.meta?.director?.toLowerCase()?.includes(f.toLowerCase())
 );
+function DeleteChannelDialog({ open, value, onConfirm, onClose}) {
+  return (
+      <Dialog open={open} onClose={onClose} aria-labelledby="form-dialog-title">
+        <DialogTitle id="form-dialog-title">Delete channel {value}?</DialogTitle>
+        <DialogActions>
+          <Button onClick={onClose} color="primary">
+            Cancel
+          </Button>
+          <Button onClick={onConfirm} color="primary">
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+  );
+}
 
 function Channels({data}) {
   const [ channelName, setChannelName ] = React.useState();
   const [ channelIdx, setChannelIdx ] = React.useState(1);
   const [ channelEntries, setChannelEntries ] = React.useState();
   const tableRef = React.useRef();
+  const [ deleteOpen, setDeleteOpen ] = React.useState(false);
   const loadChannel = (id) => {
     setChannelEntries(undefined);
     setChannelName("");
@@ -319,6 +335,12 @@ function Channels({data}) {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
   }}>
+    <DeleteChannelDialog open={deleteOpen} value={channelIdx} onConfirm={() => {
+            setChannelEntries([]);
+            setChannelName("");
+            deleteData(`api/channel/${channelIdx}`);
+            setDeleteOpen(false);
+    }} onClose={() => setDeleteOpen(false)}/>
   <MaterialTable
       tableRef={tableRef}
       title={null}
@@ -409,9 +431,7 @@ function Channels({data}) {
         },
         {
           onClick: (ev) => {
-            setChannelEntries([]);
-            setChannelName("");
-            deleteData(`api/channel/${channelIdx}`);
+            setDeleteOpen(true);
           },
           icon: 'delete',
           tooltip: 'Delete',
