@@ -438,6 +438,16 @@ int mark_video_end() {
   save_video_conf();
   video_end_pos = -1;
 }
+int seek_video(int s) {
+  dbus_seek(s * 1000000LL);
+  int pos = current_position/1000000LL + s;
+  int len = duration/1000000LL;
+  char buf[128];
+  if (pos<0) pos=0;
+  if (pos>len) pos=len;
+  sprintf(buf, "SEEK %ds: (%d:%02d/%d:%02d)", s, pos / 60, pos % 60, len / 60, len %60);
+  osd_show(buf);
+}
 int main(int argc, char *argv[]) {
   read_channels(channels);
   print_channels();
@@ -506,10 +516,10 @@ int main(int argc, char *argv[]) {
             //if (custom_show_strap_pos + STRAP_DURATION_SEC * 1000LL * 1000LL >= position)
               custom_show_strap_pos = current_position;
           }
-          if (keycode == ',' || keycode == '.') {
-            dbus_seek(keycode == ',' ? -30 * 1000000LL : 30 * 1000000LL);
-            osd_show(keycode == ',' ? "SEEK -30s" : "SEEK +30s");
-          }
+          if (keycode == ',') seek_video(-30);
+          if (keycode == '.') seek_video(30);
+          if (keycode == '<') seek_video(-5);
+          if (keycode == '>') seek_video(5);
           if (keycode == 'q') {
             signalHandler(0);
           }
