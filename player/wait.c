@@ -126,7 +126,7 @@ struct {
 };
 #define MAXCHANNELS 100
 struct channel {
-  char *logopath;
+  char *name;
   int length;
   struct channel_entry {
     char *path;
@@ -161,6 +161,7 @@ int read_channels(struct channel *channels) {
       while (len && isspace(s[len - 1])) s[--len] = '\0';
       while (isspace(*s)) s++;
       if (ln == 1) {
+        channels[current_channel].name = strdup(s);
         // TODO read channel name
       } else {
         int pos = channels[current_channel].length;
@@ -257,6 +258,7 @@ void free_channels(struct channel *channels) {
       free(channels[i].playlist[j].path);
     }
     free(channels[i].playlist);
+    if (channels[i].name) free(channels[i].name);
   }
 }
 
@@ -320,9 +322,30 @@ struct channel_entry *channel_prev() {
   save_channels_state();
   return ch->playlist + s->index;
 }
-struct channel_entry *channel_up(int current_pos) {}
-struct channel_entry *channel_down(int current_pos) {}
-struct channel_entry *channel_select(int nr, int current_pos) {}
+void channel_up(void) {
+  current_channel++;
+  if (current_channel == MAXCHANNELS) current_channel = 0;
+  struct channel *ch = channels  + current_channel;
+  struct channel_state *s = channel_state + current_channel;
+  if (!ch->length) return;
+  read_video_conf(ch->playlist[s->index].path);
+  current_position = s->position;
+  save_channels_state();
+}
+void channel_down(void) {
+  current_channel--;
+  if (current_channel < 0) current_channel = MAXCHANNELS - 1;
+  struct channel *ch = channels  + current_channel;
+  struct channel_state *s = channel_state + current_channel;
+  if (!ch->length) return;
+  read_video_conf(ch->playlist[s->index].path);
+  current_position = s->position;
+  save_channels_state();
+}
+int channel_prefix = 0;
+struct channel_entry *channel_select(int nr) {
+  
+}
 struct channel_entry *channel_select_prefix(int nr, int current_pos) {}
 
 int is_video_suffix(char *name) {
@@ -423,14 +446,14 @@ void crop_cycle() {
   dbus_crop(crop_x, crop_y, crop_w + crop_x, crop_h + crop_y);
   save_video_conf();
 }
-int mark_video_start() {
+void mark_video_start() {
   video_start_pos = video_start_pos ? 0 : current_position / 1000;
   char text[256];
   sprintf(text, "START MARK: %d.%ds", video_start_pos / 1000, video_start_pos / 100 % 10);
   osd_show(video_start_pos ? text : "START MARK RESET");
   save_video_conf();
 }
-int mark_video_end() {
+void mark_video_end() {
   video_end_pos = video_end_pos >= 0 ? -1 : current_position / 1000;
   char text[256];
   sprintf(text, "END MARK: %d.%ds", video_end_pos / 1000, video_end_pos / 100 % 10);
@@ -438,7 +461,7 @@ int mark_video_end() {
   save_video_conf();
   video_end_pos = -1;
 }
-int seek_video(int s) {
+void seek_video(int s) {
   dbus_seek(s * 1000000LL);
   int pos = current_position/1000000LL + s;
   int len = duration/1000000LL;
@@ -446,6 +469,11 @@ int seek_video(int s) {
   if (pos<0) pos=0;
   if (pos>len) pos=len;
   sprintf(buf, "SEEK %ds: (%d:%02d/%d:%02d)", s, pos / 60, pos % 60, len / 60, len %60);
+  osd_show(buf);
+}
+void show_channel() {
+  char buf[128];
+  snprintf(buf, 127, "CH%3d %s", current_channel, channels[current_channel].name);
   osd_show(buf);
 }
 int main(int argc, char *argv[]) {
@@ -473,6 +501,7 @@ int main(int argc, char *argv[]) {
       case PLAYER_STOPPED:
         ;
         struct channel_entry *ce = changing_video ? channel_current_entry() : channel_next();
+        if (!ce) break;
         changing_video = false;
         start_player(ce->path, current_position);
         custom_show_strap_pos = -STRAP_DURATION_SEC * 1000LL * 1000LL;
@@ -502,9 +531,11 @@ int main(int argc, char *argv[]) {
         int keycode = 0;
         while ((keycode = term_getkey()) > 0) {
           printf("GOT %d\n", keycode);
-          if (keycode == 'a' || keycode == 'd') {
+          if (keycode == 'a' || keycode == 'd' || keycode == 'w' || keycode == 's') {
             if (keycode == 'a') channel_prev();
             if (keycode == 'd') channel_next();
+            if (keycode == 'w') channel_up(), show_channel();
+            if (keycode == 's') channel_down(), show_channel();
             dbus_quit();
             state = PLAYER_STOPPING;
             changing_video = true;
