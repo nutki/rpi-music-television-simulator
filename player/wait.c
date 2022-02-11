@@ -92,6 +92,7 @@ int start_player(char *f, int start) {
 }
 int check_ifstopped() {
   int status;
+  if (cpid <= 0) return 0;
   pid_t w = waitpid(cpid, &status, WNOHANG);
   if (w == -1) {
       perror("waitpid");
@@ -103,6 +104,7 @@ int check_ifstopped() {
       printf("player killed by signal %d\n", WTERMSIG(status));
     }
     state = PLAYER_STOPPED;
+    cpid = 0;
   }
   return 0;
 }
@@ -473,8 +475,70 @@ void seek_video(int s) {
 }
 void show_channel() {
   char buf[128];
-  snprintf(buf, 127, "CH%3d %s", current_channel, channels[current_channel].name);
+  char *name = channels[current_channel].name;
+  if (!name) name = "";
+  snprintf(buf, 127, "CH%3d %s", current_channel, name);
   osd_show(buf);
+  printf("Switching to channel %d (%s) state =%d\n", current_channel, name, state);
+}
+bool changing_video = true;
+int64_t custom_show_strap_pos = 0;
+void process_input(void) {
+  int keycode = 0;
+  while ((keycode = term_getkey()) > 0) {
+    printf("GOT %d\n", keycode);
+    if (state == PLAYER_STOPPED || state == PLAYER_RUNNING) {
+      if (keycode == 'a' || keycode == 'd' || keycode == 'w' || keycode == 's') {
+        if (keycode == 'a') channel_prev();
+        if (keycode == 'd') channel_next();
+        if (keycode == 'w') channel_up(), show_channel();
+        if (keycode == 's') channel_down(), show_channel();
+        if (state == PLAYER_RUNNING) {
+          dbus_quit();
+          state = PLAYER_STOPPING;
+        }
+        changing_video = true;
+      }
+    }
+    if (state == PLAYER_RUNNING) {
+      if (keycode == ' ') {
+        dbus_action("PlayPause");
+      }
+      if (keycode == 'i') {
+        //if (custom_show_strap_pos + STRAP_DURATION_SEC * 1000LL * 1000LL >= position)
+          custom_show_strap_pos = current_position;
+      }
+      if (keycode == ',') seek_video(-30);
+      if (keycode == '.') seek_video(30);
+      if (keycode == '<') seek_video(-5);
+      if (keycode == '>') seek_video(5);
+      if (keycode == 'c') {
+        crop_cycle();
+      }
+      if (keycode == 'x') {
+        aspect_mode = !aspect_mode;
+        dbus_aspect_mode(aspect_mode ? "fill" : "letterbox");
+        osd_show(aspect_mode ? "ASPECT: FILL FRAME" : "ASPECT: LETTERBOX");
+        save_channels_state();
+      }
+      if (keycode == 'b') {
+        mark_video_start();
+      }
+      if (keycode == 'n') {
+        mark_video_end();
+      }
+    }
+    if (keycode == 'q') {
+      signalHandler(0);
+    }
+  }
+  if (channel_set_file(handle_requests())) {
+    if (state == PLAYER_RUNNING || state == PLAYER_STARTING) {
+      dbus_quit();
+      state = PLAYER_STOPPING;
+    }
+    changing_video = true;
+  }
 }
 int main(int argc, char *argv[]) {
   read_channels(channels);
@@ -483,8 +547,6 @@ int main(int argc, char *argv[]) {
   FILE *pidfile = fopen("/tmp/.mpv.pid", "w+");
   fprintf(pidfile, "%d\n", getpid());
   fclose(pidfile);
-  int64_t custom_show_strap_pos = 0;
-  bool changing_video = true;
   if (signal(SIGINT, signalHandler) == SIG_ERR || signal(SIGTERM, signalHandler) == SIG_ERR) {
     perror("installing signal handler");
     exit(EXIT_FAILURE);
@@ -528,59 +590,13 @@ int main(int argc, char *argv[]) {
           if (c > max) max = c;
           dispmanx_alpha((int)(max * 200));
         }
-        int keycode = 0;
-        while ((keycode = term_getkey()) > 0) {
-          printf("GOT %d\n", keycode);
-          if (keycode == 'a' || keycode == 'd' || keycode == 'w' || keycode == 's') {
-            if (keycode == 'a') channel_prev();
-            if (keycode == 'd') channel_next();
-            if (keycode == 'w') channel_up(), show_channel();
-            if (keycode == 's') channel_down(), show_channel();
-            dbus_quit();
-            state = PLAYER_STOPPING;
-            changing_video = true;
-          }
-          if (keycode == ' ') {
-            dbus_action("PlayPause");
-          }
-          if (keycode == 'i') {
-            //if (custom_show_strap_pos + STRAP_DURATION_SEC * 1000LL * 1000LL >= position)
-              custom_show_strap_pos = current_position;
-          }
-          if (keycode == ',') seek_video(-30);
-          if (keycode == '.') seek_video(30);
-          if (keycode == '<') seek_video(-5);
-          if (keycode == '>') seek_video(5);
-          if (keycode == 'q') {
-            signalHandler(0);
-          }
-          if (keycode == 'c') {
-            crop_cycle();
-          }
-          if (keycode == 'x') {
-            aspect_mode = !aspect_mode;
-            dbus_aspect_mode(aspect_mode ? "fill" : "letterbox");
-            osd_show(aspect_mode ? "ASPECT: FILL FRAME" : "ASPECT: LETTERBOX");
-            save_channels_state();
-          }
-          if (keycode == 'b') {
-            mark_video_start();
-          }
-          if (keycode == 'n') {
-            mark_video_end();
-          }
-        }
-        if (channel_set_file(handle_requests())) {
-          dbus_quit();
-          state = PLAYER_STOPPING;
-          changing_video = true;
-        }
         if (video_end_pos != -1 && current_position >= video_end_pos * 1000) {
           dbus_quit();
           state = PLAYER_STOPPING;
         }
         break;
     }
+    process_input();
     usleep(1000000 / 60);
   }
 }
