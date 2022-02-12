@@ -127,6 +127,7 @@ struct {
   { "/home/pi/Enigma - Return To Innocence-Rk_sAHh9s08.mp4" },
 };
 #define MAXCHANNELS 100
+#define CHANNELDIGITS 2
 struct channel {
   char *name;
   int length;
@@ -296,6 +297,34 @@ void print_channels() {
   }
 }
 
+int osd_timeout = 0;
+void osd_show(const char * s) {
+  if (osd_timeout) osd_text_clear();
+  osd_timeout = 60;
+  osd_text(s, 0);
+}
+void osd_update() {
+  if (osd_timeout) {
+    if(!--osd_timeout) osd_text_clear();
+  }
+}
+void show_channel() {
+  char buf[128];
+  char *name = channels[current_channel].name;
+  if (!name) name = "<NO SIGNAL>";
+  snprintf(buf, 127, "CH %*d %s", CHANNELDIGITS, current_channel, name);
+  osd_show(buf);
+  printf("Switching to channel %d (%s) state =%d\n", current_channel, name, state);
+}
+void show_channel_prefix(int channel_digits, int channel_prefix) {
+  char buf[128];
+  snprintf(buf, 127, "CH %.*s%0*d", CHANNELDIGITS - channel_digits, "--------------", channel_digits, channel_prefix);
+  osd_show(buf);
+  osd_timeout = 1000;
+}
+
+bool changing_video = true;
+
 struct channel_entry *channel_current_entry() {
   struct channel *ch = channels  + current_channel;
   struct channel_state *s = channel_state + current_channel;
@@ -324,31 +353,55 @@ struct channel_entry *channel_prev() {
   save_channels_state();
   return ch->playlist + s->index;
 }
-void channel_up(void) {
-  current_channel++;
-  if (current_channel == MAXCHANNELS) current_channel = 0;
+void switch_to_channel(int nr) {
+  if (nr < 0 || nr >= MAXCHANNELS || nr == current_channel) {
+    osd_text_clear();
+    return;
+  }
+  printf("Switching to channel %d\n", nr);
+  current_channel = nr;
   struct channel *ch = channels  + current_channel;
   struct channel_state *s = channel_state + current_channel;
-  if (!ch->length) return;
-  read_video_conf(ch->playlist[s->index].path);
-  current_position = s->position;
+  if (ch->length) {
+    read_video_conf(ch->playlist[s->index].path);
+    current_position = s->position;
+  }
   save_channels_state();
+  show_channel();
+  bg_mode(BG_MODE_BLUE);
+  if (state == PLAYER_RUNNING) {
+    dbus_quit();
+    state = PLAYER_STOPPING;
+  }
+  changing_video = true;
+}
+void channel_up(void) {
+  switch_to_channel(current_channel == MAXCHANNELS - 1 ? 0 : current_channel + 1);
 }
 void channel_down(void) {
-  current_channel--;
-  if (current_channel < 0) current_channel = MAXCHANNELS - 1;
-  struct channel *ch = channels  + current_channel;
-  struct channel_state *s = channel_state + current_channel;
-  if (!ch->length) return;
-  read_video_conf(ch->playlist[s->index].path);
-  current_position = s->position;
-  save_channels_state();
+  switch_to_channel(current_channel == 0 ? MAXCHANNELS - 1 : current_channel - 1);
 }
 int channel_prefix = 0;
-struct channel_entry *channel_select(int nr) {
-  
+int channel_digits = 0;
+int channel_switch_timeout = 0;
+void channel_select(int nr) {
+  channel_digits++;
+  channel_prefix *= 10;
+  channel_prefix += nr;
+  if (channel_digits == CHANNELDIGITS || channel_prefix * 10 >= MAXCHANNELS) {
+    switch_to_channel(channel_prefix);
+    channel_prefix = channel_digits = channel_switch_timeout = 0;
+  } else {
+    show_channel_prefix(channel_digits, channel_prefix);
+    channel_switch_timeout = 100;
+  }
 }
-struct channel_entry *channel_select_prefix(int nr, int current_pos) {}
+void channel_select_tick() {
+  if (channel_switch_timeout && !--channel_switch_timeout) {
+    switch_to_channel(channel_prefix);
+    channel_prefix = channel_digits = 0;
+  }
+}
 
 int is_video_suffix(char *name) {
   if (!strcmp(name, ".mkv")) return 1;
@@ -373,6 +426,7 @@ int channel_set_file(char *file) {
       return 1;
     }
   }
+  // TODO: switch to channel 0 and retry
   return 0;
 }
 
@@ -404,17 +458,6 @@ char *handle_requests() {
     }
   }
   return 0;
-}
-int osd_timeout = 0;
-void osd_show(const char * s) {
-  if (osd_timeout) osd_text_clear();
-  osd_timeout = 60;
-  osd_text(s, 0);
-}
-void osd_update() {
-  if (osd_timeout) {
-    if(!--osd_timeout) osd_text_clear();
-  }
 }
 void crop_cycle() {
   if (video_height <= 0 || video_width <= 0) return;
@@ -473,32 +516,24 @@ void seek_video(int s) {
   sprintf(buf, "SEEK %ds: (%d:%02d/%d:%02d)", s, pos / 60, pos % 60, len / 60, len %60);
   osd_show(buf);
 }
-void show_channel() {
-  char buf[128];
-  char *name = channels[current_channel].name;
-  if (!name) name = "";
-  snprintf(buf, 127, "CH%3d %s", current_channel, name);
-  osd_show(buf);
-  printf("Switching to channel %d (%s) state =%d\n", current_channel, name, state);
-}
-bool changing_video = true;
 int64_t custom_show_strap_pos = 0;
 void process_input(void) {
   int keycode = 0;
   while ((keycode = term_getkey()) > 0) {
     printf("GOT %d\n", keycode);
     if (state == PLAYER_STOPPED || state == PLAYER_RUNNING) {
-      if (keycode == 'a' || keycode == 'd' || keycode == 'w' || keycode == 's') {
+      if (keycode == 'a' || keycode == 'd') {
         if (keycode == 'a') channel_prev();
         if (keycode == 'd') channel_next();
-        if (keycode == 'w') channel_up(), show_channel();
-        if (keycode == 's') channel_down(), show_channel();
         if (state == PLAYER_RUNNING) {
           dbus_quit();
           state = PLAYER_STOPPING;
         }
         changing_video = true;
       }
+      if (keycode == 'w') channel_up();
+      if (keycode == 's') channel_down();
+      if (keycode >= '0' && keycode <= '9') channel_select(keycode - '0');
     }
     if (state == PLAYER_RUNNING) {
       if (keycode == ' ') {
@@ -563,7 +598,10 @@ int main(int argc, char *argv[]) {
       case PLAYER_STOPPED:
         ;
         struct channel_entry *ce = changing_video ? channel_current_entry() : channel_next();
-        if (!ce) break;
+        if (!ce) {
+          bg_mode(BG_MODE_NOISE);
+          break;
+        }
         changing_video = false;
         start_player(ce->path, current_position);
         custom_show_strap_pos = -STRAP_DURATION_SEC * 1000LL * 1000LL;
@@ -576,6 +614,7 @@ int main(int argc, char *argv[]) {
           video_width = query("ResWidth");
           video_height = query("ResHeight");
           state = PLAYER_RUNNING;
+          bg_mode(BG_MODE_BLACK);
         }
         break;
       case PLAYER_RUNNING:
@@ -596,6 +635,7 @@ int main(int argc, char *argv[]) {
         }
         break;
     }
+    if (state == PLAYER_STOPPED || state == PLAYER_RUNNING) channel_select_tick();
     process_input();
     usleep(1000000 / 60);
   }

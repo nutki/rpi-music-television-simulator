@@ -150,52 +150,77 @@ void dispmanx_alpha(int a) {
   vc_dispmanx_element_change_attributes(update, element, ELEMENT_CHANGE_OPACITY, 0, a, 0, 0, 0, 0);
   result = vc_dispmanx_update_submit_sync(update);
 }
+DISPMANX_RESOURCE_HANDLE_T  bg_resource;
+DISPMANX_ELEMENT_HANDLE_T   bg_element;
+#define BG_WIDTH 720
+#define BG_HEIGHT 480
+uint16_t bg_data[BG_WIDTH * BG_HEIGHT];
+uint16_t rnd_data[BG_WIDTH * BG_HEIGHT + 0x1000];
 void blank_background()
 {
-  uint32_t rgba = 0xff000000;
+  uint16_t rgba = 0xf000;
   DISPMANX_UPDATE_HANDLE_T    update;
-  DISPMANX_RESOURCE_HANDLE_T  resource;
-  DISPMANX_ELEMENT_HANDLE_T   element;
   int             ret;
   uint32_t vc_image_ptr;
-  VC_IMAGE_TYPE_T type = VC_IMAGE_ARGB8888;
+  VC_IMAGE_TYPE_T type = VC_IMAGE_RGBA16;
   int             layer = - 1;
 
   VC_RECT_T dst_rect, src_rect;
 
-  resource = vc_dispmanx_resource_create( type, 1 /*width*/, 1 /*height*/, &vc_image_ptr );
-  assert( resource );
+  for (int i = 0; i < BG_WIDTH * BG_HEIGHT; i++) bg_data[i] = rgba;
+  for (int i = 0; i < BG_WIDTH * BG_HEIGHT + 0x1000; i++) rnd_data[i] = 0xf + 0x1110 * (rand() & 0xf);
+  bg_resource = vc_dispmanx_resource_create( type, BG_WIDTH /*width*/, BG_HEIGHT /*height*/, &vc_image_ptr );
+  assert( bg_resource );
 
-  vc_dispmanx_rect_set( &dst_rect, 0, 0, 1, 1);
+  vc_dispmanx_rect_set( &dst_rect, 0, 0, BG_WIDTH, BG_HEIGHT);
 
-  ret = vc_dispmanx_resource_write_data( resource, type, sizeof(rgba), &rgba, &dst_rect );
+  ret = vc_dispmanx_resource_write_data( bg_resource, type, BG_WIDTH * sizeof(*bg_data), &bg_data, &dst_rect );
   assert(ret == 0);
 
-  vc_dispmanx_rect_set( &src_rect, 0, 0, 1<<16, 1<<16);
-  vc_dispmanx_rect_set( &dst_rect, 0, 0, 0, 0);
+  vc_dispmanx_rect_set( &src_rect, 0, 0, BG_WIDTH<<16, BG_HEIGHT<<16);
+  vc_dispmanx_rect_set( &dst_rect, 0, 0, screenX, screenY);
 
   update = vc_dispmanx_update_start(0);
   assert(update);
 
-  element = vc_dispmanx_element_add(update, display, layer, &dst_rect, resource, &src_rect,
+  bg_element = vc_dispmanx_element_add(update, display, layer, &dst_rect, bg_resource, &src_rect,
                                     DISPMANX_PROTECTION_NONE, NULL, NULL, DISPMANX_STEREOSCOPIC_MONO );
-  assert(element);
+  assert(bg_element);
 
   ret = vc_dispmanx_update_submit_sync( update );
   assert( ret == 0 );
 }
+void bg_mode(int mode) {
+	VC_RECT_T osdRect2;
+  uint16_t rgba = mode ? 0x00ff : 0x000f, *src_data;
+  if (mode == 2) {
+    src_data = rnd_data + (rand() & 0xfff);
+  } else {
+    for (int i = 0; i < BG_WIDTH * BG_HEIGHT; i++) bg_data[i] = rgba;
+    src_data = bg_data;
+  }
+ 	vc_dispmanx_rect_set(&osdRect2, 0, 0, BG_WIDTH, BG_HEIGHT);
+    vc_dispmanx_resource_write_data(
+      bg_resource, VC_IMAGE_ARGB8888, BG_WIDTH * sizeof(*src_data), src_data, &osdRect2);  
+}
+
 void dispmanx_close() {
         int result;
-        if (element) {
 	DISPMANX_UPDATE_HANDLE_T update = vc_dispmanx_update_start(0);
-	assert(update != 0);
-	result = vc_dispmanx_element_remove(update, element);
-	assert(result == 0);
+	if (element) result = vc_dispmanx_element_remove(update, element);
+	if (bg_element) result = vc_dispmanx_element_remove(update, bg_element);
+	if (osd_element) result = vc_dispmanx_element_remove(update, osd_element);
 	result = vc_dispmanx_update_submit_sync(update);
-	assert(result == 0);
-        }
         if (resource) {
 	result = vc_dispmanx_resource_delete(resource);
+	assert(result == 0);
+        }
+        if (bg_resource) {
+	result = vc_dispmanx_resource_delete(bg_resource);
+	assert(result == 0);
+        }
+        if (osd_resource) {
+	result = vc_dispmanx_resource_delete(osd_resource);
 	assert(result == 0);
         }
         if (display) {
