@@ -10,6 +10,7 @@
 #include "dbus.h"
 #include "dispmanx.h"
 #include "terminput.h"
+#include "comm.h"
 
 /* Playlist setup */
 
@@ -430,34 +431,14 @@ int channel_set_file(char *file) {
   return 0;
 }
 
-int reload_request = 0;
-static void handle_sighup(int n) {
-  printf("SIGHUP\n");
-  reload_request = 1;
-}
 static void signalHandler(int signalNumber) {
   printf("Got signal\n");
   save_channels_state();
   dbus_quit();
   dispmanx_close();
+  comm_close();
   term_cleanup();
   exit(EXIT_SUCCESS);
-}
-char *handle_requests() {
-  char linebuf[1024];
-  if (reload_request) {
-    reload_request = 0;
-    printf("Handling requests\n");
-    reload_channels();
-    FILE *f = fopen("/tmp/.mpv.playnow", "r+");
-    if (f) {
-      char *s = fgets(linebuf, sizeof(linebuf), f);
-      fclose(f);
-      remove("/tmp/.mpv.playnow");
-      return s;
-    }
-  }
-  return 0;
 }
 void crop_cycle() {
   if (video_height <= 0 || video_width <= 0) return;
@@ -567,21 +548,26 @@ void process_input(void) {
       signalHandler(0);
     }
   }
-  if (channel_set_file(handle_requests())) {
-    if (state == PLAYER_RUNNING || state == PLAYER_STARTING) {
-      dbus_quit();
-      state = PLAYER_STOPPING;
+  char *msg;
+  while(msg = comm_read()) {
+    printf("%s\n", msg);
+    if (msg[0] == 'P') {
+      channel_set_file(msg + 1);
+      if (state == PLAYER_RUNNING || state == PLAYER_STARTING) {
+        dbus_quit();
+        state = PLAYER_STOPPING;
+      }
+      changing_video = true;
     }
-    changing_video = true;
+    if (msg[0] == 'C') {
+      printf("Handling requests\n");
+      reload_channels();
+    }
   }
 }
 int main(int argc, char *argv[]) {
   read_channels(channels);
   print_channels();
-  signal(SIGHUP, handle_sighup);
-  FILE *pidfile = fopen("/tmp/.mpv.pid", "w+");
-  fprintf(pidfile, "%d\n", getpid());
-  fclose(pidfile);
   if (signal(SIGINT, signalHandler) == SIG_ERR || signal(SIGTERM, signalHandler) == SIG_ERR) {
     perror("installing signal handler");
     exit(EXIT_FAILURE);
@@ -589,6 +575,7 @@ int main(int argc, char *argv[]) {
   dispmanx_init();
   blank_background();
   dbus_init();
+  comm_init();
   term_setup();
   read_channels_state();
   for(int64_t frame = 0;; frame++) {

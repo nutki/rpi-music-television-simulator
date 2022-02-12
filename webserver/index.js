@@ -17,6 +17,7 @@ const readFile = promisify(fs.readFile);
 const unlink = promisify(fs.unlink);
 const path = '/media/SSD/music videos';
 const { getMetaForFilename, queryMeta } = require('./meta');
+const { UnixDgramSocket } = require('unix-dgram-socket');
 
 const ProcessingQue = class {
   que = [];
@@ -39,9 +40,14 @@ const ProcessingQue = class {
   }
 }
 
-async function pingPlayer() {
-  const pid = parseInt(await readFile("/tmp/.mpv.pid"));
-  if (pid) process.kill(pid, 'SIGHUP');
+async function pingPlayer(msg) {
+  try {
+    const socket = new UnixDgramSocket();
+    socket.send(msg, '/tmp/.mpv.socket');
+    socket.close();
+  } catch(e) {
+    console.log(e);
+  }
 }
 
 api.use(express.json())
@@ -54,8 +60,7 @@ api.get('/list', async (req, res) => {
 });
 api.get('/video/:id/play', async (req, res) => {
   console.log('play', req.params.id);
-  await writeFile("/tmp/.mpv.playnow", path + "/" + req.params.id);
-  await pingPlayer();
+  await pingPlayer("P" + path + "/" + req.params.id);
   res.json({});
 })
 api.get('/video/:id', async (req, res) => {
@@ -159,7 +164,7 @@ const channelsQue = new ProcessingQue(async () => {
   const files = (await readdir(path, { withFileTypes: true }))
     .filter(f => f.isFile() && f.name.match(/\.(mkv|mp4|mov)$/))
   await writeFile("../channels/1.txt", "\n" + files.map(f => f.name + "\n").join(""));
-  await pingPlayer();
+  await pingPlayer("C1");
   console.log("regenerating done");
 });
 inotify.stdout.on('data', data => lb.feed(data).map(line => JSON.parse(line)).forEach(ev => {
@@ -195,6 +200,7 @@ const channels_get_entries = async (nr) => {
 const channels_set_entries = async (nr, name, entries) => {
   const contents = name + "\n" + entries.join("\n") + "\n";
   await writeFile("../channels/" + nr + ".txt", contents);
+  pingPlayer("C" + nr);
 }
 const channels_delete = async (nr) => {
   if (await exists("../channels/" + nr + ".txt")) await unlink("../channels/" + nr + ".txt");
