@@ -585,6 +585,7 @@ int main(int argc, char *argv[]) {
       case PLAYER_STOPPED:
         ;
         struct channel_entry *ce = changing_video ? channel_current_entry() : channel_next();
+        dispmanx_alpha(0);
         if (!ce) {
           bg_mode(BG_MODE_NOISE);
           break;
@@ -592,7 +593,6 @@ int main(int argc, char *argv[]) {
         changing_video = false;
         start_player(ce->path, current_position);
         custom_show_strap_pos = -STRAP_DURATION_SEC * 1000LL * 1000LL;
-        dispmanx_alpha(0);
         load_strap(ce->path);
         break;
       case PLAYER_STARTING:
