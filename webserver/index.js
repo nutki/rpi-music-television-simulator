@@ -198,7 +198,7 @@ const channels_get_entries = async (nr) => {
   return channel;
 }
 const channels_set_entries = async (nr, name, entries) => {
-  const contents = name + "\n" + entries.join("\n") + "\n";
+  const contents = name + "\n" + entries.map(x => x + "\n").join("");
   await writeFile("../channels/" + nr + ".txt", contents);
   pingPlayer("C" + nr);
 }
