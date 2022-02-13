@@ -322,6 +322,9 @@ function Channels({data}) {
     });
   }
   React.useEffect(() => loadChannel(channelIdx), [channelIdx]);
+  const saveChannel = (entries = channelEntries, name = channelName) => {
+    entries && postData(`api/channel/${channelIdx}`, { name, entries });
+  };
   const channelData = React.useMemo(() => {
     if (!channelEntries) return undefined;
     const map = new Map(data?.map(({filename, meta}) => [filename, meta]));
@@ -355,14 +358,20 @@ function Channels({data}) {
       actions={[
         {
           onClick: (ev, r) => {
-            channelEntries && setChannelEntries([...channelEntries, r.filename]);
+            if (!channelEntries) return;
+            const newEntries = [...channelEntries, r.filename];
+            setChannelEntries(newEntries);
+            saveChannel(newEntries);
           },
           icon: 'play_arrow',
           tooltip: 'Add',
         },
         {
           onClick: (ev) => {
-            channelEntries && setChannelEntries([...channelEntries, ...tableRef.current.state.data.map(v => v.filename)])
+            if (!channelEntries) return;
+            const newEntries = [...channelEntries, ...tableRef.current.state.data.map(v => v.filename)];
+            setChannelEntries(newEntries);
+            saveChannel(newEntries);
           },
           icon: 'play_arrow',
           tooltip: 'Add All',
@@ -378,7 +387,9 @@ function Channels({data}) {
       title={<>
         <InputLabel>CH</InputLabel>
         <TextField value={channelIdx} style={{width:50, paddingRight: 10}} type="number" onChange={ev => setChannel(ev.target.value)}/>
-        <TextField value={channelName} onChange={ev => setChannelName(ev.target.value)} disabled={!data} />
+        <TextField value={channelName} onChange={ev => setChannelName(ev.target.value)} disabled={!data}  onBlur={() => {
+          saveChannel();
+        }}/>
       </>}
       columns={[
         { title: 'Name', sorting: false, field: 'meta.artist', render: (row => {
@@ -394,7 +405,10 @@ function Channels({data}) {
       actions={[
         {
           onClick: (ev, r) => {
-            channelEntries && setChannelEntries(channelEntries.filter((v, i) => i !== r.idx));
+            if (!channelEntries) return;
+            const newEntries = channelEntries.filter((v, i) => i !== r.idx);
+            setChannelEntries(newEntries);
+            saveChannel(newEntries);
           },
           icon: 'clear',
           tooltip: 'Remove',
@@ -406,6 +420,7 @@ function Channels({data}) {
             newEntries[r.idx] = channelEntries[r.idx - 1];
             newEntries[r.idx - 1] = channelEntries[r.idx];
             setChannelEntries(newEntries);
+            saveChannel(newEnries);
           },
           icon: 'arrow_upward',
           tooltip: 'Up',
@@ -417,17 +432,10 @@ function Channels({data}) {
             newEntries[r.idx] = channelEntries[r.idx + 1];
             newEntries[r.idx + 1] = channelEntries[r.idx];
             setChannelEntries(newEntries);
+            saveChannel(newEntries);
           },
           icon: 'arrow_downward',
           tooltip: 'Down',
-        },
-        {
-          onClick: (ev) => {
-            channelEntries && postData(`api/channel/${channelIdx}`, { name: channelName, entries: channelEntries });
-          },
-          icon: 'save',
-          tooltip: 'Save',
-          isFreeAction: true,
         },
         {
           onClick: (ev) => {
