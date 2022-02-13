@@ -274,25 +274,6 @@ void free_channels(struct channel *channels) {
   }
 }
 
-void reload_channel(int i) {
-  struct channel new_channel;
-  read_channel(&new_channel, i);
-  if (channels[i].length) {
-    char *current_path = channels[i].playlist[channel_state[i].index].path;
-    int new_pos = 0;
-    for (int j = 0; j < new_channel.length; j++) {
-      if (!strcmp(current_path, new_channel.playlist[j].path)) {
-        new_pos = j;
-        break;
-      }
-    }
-    channel_state[i].index = new_pos;
-  }
-  free_channel(channels + i);
-  channels[i] = new_channel;
-  save_channels_state();
-}
-
 int osd_timeout = 0;
 void osd_show(const char * s) {
   if (osd_timeout) osd_text_clear();
@@ -321,33 +302,53 @@ void show_channel_prefix(int channel_digits, int channel_prefix) {
 
 bool changing_video = true;
 
-struct channel_entry *channel_current_entry() {
-  struct channel *ch = channels  + current_channel;
-  struct channel_state *s = channel_state + current_channel;
+int channel_convert_index(int ch, int len, int i) {
+  int mod = i % len;
+  return mod < 0 ? mod + len : mod;
+}
+int channel_find_file(int nr, char *file) {
+  struct channel *ch = channels + nr;
+  for (int i = 0; i < ch->length; i++) {
+    if (!strcmp(ch->playlist[i].path, file)) {
+      channel_state[nr].index = i;
+      return 1;
+    }
+  }
+  return 0;
+}
+
+struct channel_entry *channel_entry(int nr) {
+  struct channel *ch = channels + nr;
+  struct channel_state *s = channel_state + nr;
   if (!ch->length) return 0;
-  return ch->playlist + s->index;
+  return ch->playlist + channel_convert_index(nr, ch->length, s->index);
+}
+struct channel_entry *channel_current_entry() {
+  return channel_entry(current_channel);
 }
 struct channel_entry *channel_next() {
   struct channel *ch = channels  + current_channel;
   struct channel_state *s = channel_state + current_channel;
   if (!ch->length) return 0;
-  s->index = (s->index + 1) % ch->length;
-  read_video_conf(ch->playlist[s->index].path);
+  s->index++;
+  struct channel_entry *ce = channel_current_entry();
+  read_video_conf(ce->path);
   s->position = video_start_pos * 1000;
   current_position = video_start_pos * 1000;
   save_channels_state();
-  return ch->playlist + s->index;
+  return ce;
 }
 struct channel_entry *channel_prev() {
   struct channel *ch = channels  + current_channel;
   struct channel_state *s = channel_state + current_channel;
   if (!ch->length) return 0;
-  s->index = (s->index + ch->length - 1) % ch->length;
-  read_video_conf(ch->playlist[s->index].path);
+  s->index--;
+  struct channel_entry *ce = channel_current_entry();
+  read_video_conf(ce->path);
   s->position = video_start_pos * 1000;
   current_position = video_start_pos * 1000;
   save_channels_state();
-  return ch->playlist + s->index;
+  return ce;
 }
 void switch_to_channel(int nr) {
   if (nr < 0 || nr >= MAXCHANNELS || nr == current_channel) {
@@ -356,10 +357,10 @@ void switch_to_channel(int nr) {
   }
   printf("Switching to channel %d\n", nr);
   current_channel = nr;
-  struct channel *ch = channels  + current_channel;
   struct channel_state *s = channel_state + current_channel;
-  if (ch->length) {
-    read_video_conf(ch->playlist[s->index].path);
+  struct channel_entry *ce = channel_current_entry();
+  if (ce) {
+    read_video_conf(ce->path);
     current_position = s->position;
   }
   save_channels_state();
@@ -399,32 +400,42 @@ void channel_select_tick() {
   }
 }
 
-int is_video_suffix(char *name) {
-  if (!strcmp(name, ".mkv")) return 1;
-  if (!strcmp(name, ".mp4")) return 1;
-  if (!strcmp(name, ".mov")) return 1;
-  return 0;
-}
-
-int channel_set_file(char *file) {
-  struct channel *ch = channels  + current_channel;
-  struct channel_state *s = channel_state + current_channel;
-  if (!file) return 0;
+void channel_set_file(char *file) {
   printf("should play: >>%s<< \n", file);
-  for (int i = 0; i < ch->length; i++) {
-    if (!strncmp(ch->playlist[i].path, file, strlen(file)) && is_video_suffix(ch->playlist[i].path + strlen(file))) {
-      s->index = i;
-      read_video_conf(ch->playlist[s->index].path);
-      s->position = video_start_pos * 1000;
-      current_position = video_start_pos * 1000;
-      save_channels_state();
-      printf("found at index %d\n", i);
-      return 1;
+  if (!channel_find_file(current_channel, file)) {
+    if (!channel_find_file(0, file)) {
+      return;
+    }
+    current_channel = 0;
+  }
+  struct channel_state *s = channel_state + current_channel;
+  struct channel_entry *ce = channel_current_entry();
+  read_video_conf(ce->path);
+  s->position = video_start_pos * 1000;
+  current_position = video_start_pos * 1000;
+  save_channels_state();
+  printf("found at index %d\n", s->index);
+  if (state == PLAYER_RUNNING || state == PLAYER_STARTING) {
+    dbus_quit();
+    state = PLAYER_STOPPING;
+  }
+  changing_video = true;
+}
+void reload_channel(int i) {
+  struct channel *ch = channels + i;
+  struct channel old_channel = *ch;
+  struct channel_entry *old_ce = channel_entry(i);
+  read_channel(ch, i);
+  if (ch->length) {
+    if (!channel_find_file(i, old_ce->path)) {
+      channel_state[i].index = 0;
+      channel_state[i].position = 0;
     }
   }
-  // TODO: switch to channel 0 and retry
-  return 0;
+  free_channel(&old_channel);
+  save_channels_state();
 }
+
 
 static void signalHandler(int signalNumber) {
   printf("Got signal\n");
@@ -548,11 +559,6 @@ void process_input(void) {
     printf("%s\n", msg);
     if (msg[0] == 'P') {
       channel_set_file(msg + 1);
-      if (state == PLAYER_RUNNING || state == PLAYER_STARTING) {
-        dbus_quit();
-        state = PLAYER_STOPPING;
-      }
-      changing_video = true;
     }
     if (msg[0] == 'C') {
       printf("Handling requests\n");

@@ -487,7 +487,7 @@ export default function MaterialTableDemo() {
       }}
       actions={[
         {
-          onClick: (ev, r) => void fetch(uri`/api/video/${r.id}/play`),
+          onClick: (ev, r) => void fetch(uri`/api/video/${r.filename}/play`),
           icon: 'play_arrow',
           tooltip: 'Play',
         },
