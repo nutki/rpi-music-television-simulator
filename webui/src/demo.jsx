@@ -330,9 +330,7 @@ function Channels({data}) {
     const map = new Map(data?.map(({filename, meta}) => [filename, meta]));
     return channelEntries?.map((filename, idx) => ({filename, idx, meta: map.get(filename) || { name: filename }}));
   }, [channelEntries, data]);
-  const setChannel = (nr) => {
-    setChannelIdx(nr);
-  }
+  const setChannel = (nr) => nr > 0 && nr < 1000 && setChannelIdx(nr);
   return <>
   <div style={{
     display: "grid",
