@@ -147,45 +147,50 @@ int current_position = 0;
 
 #define CHANNELS_PATH "channels"
 #define VIDEO_PATH "/media/SSD/music videos"
-int read_channels(struct channel *channels) {
+int read_channel(struct channel *channel, int current_channel) {
   char linebuf[1024], *s, tmp[1024*2];
-  for (int i = 0; i < MAXCHANNELS; i++) {
-    sprintf(linebuf, "%s/%d.txt", CHANNELS_PATH, i);
-    FILE *f = fopen(linebuf, "r");
-    if (!f) continue;
-    printf("loading channel %d\n", i);
-    int current_channel = i;
-
-    for (int ln = 1; (s = fgets(linebuf, sizeof(linebuf), f)); ln++) {
-      int len = strlen(s);
-      if (len == sizeof(linebuf) - 1) {
-        printf("Line too long %s/%d.txt:%d\n", CHANNELS_PATH, i, ln);
+  sprintf(linebuf, "%s/%d.txt", CHANNELS_PATH, current_channel);
+  FILE *f = fopen(linebuf, "r");
+  if (!f) return 0;
+  printf("loading channel %d\n", current_channel);
+  channel->length = 0;
+  channel->name = 0;
+  channel->playlist = 0;
+  for (int ln = 1; (s = fgets(linebuf, sizeof(linebuf), f)); ln++) {
+    int len = strlen(s);
+    if (len == sizeof(linebuf) - 1) {
+      printf("Line too long %s/%d.txt:%d\n", CHANNELS_PATH, current_channel, ln);
+      return -1;
+    }
+    while (len && isspace(s[len - 1])) s[--len] = '\0';
+    while (isspace(*s)) s++;
+    if (ln == 1) {
+      channel->name = strdup(s);
+      // TODO read channel name
+    } else {
+      int pos = channel->length;
+      if (!pos) channel->playlist = malloc(sizeof(struct channel_entry));
+      else if (!(pos & pos - 1)) channel->playlist = realloc(channel->playlist, pos * 2 * sizeof(struct channel_entry));
+      if (!channel->playlist) {
+        printf("OOM\n");
         return -1;
       }
-      while (len && isspace(s[len - 1])) s[--len] = '\0';
-      while (isspace(*s)) s++;
-      if (ln == 1) {
-        channels[current_channel].name = strdup(s);
-        // TODO read channel name
-      } else {
-        int pos = channels[current_channel].length;
-        if (!pos) channels[current_channel].playlist = malloc(sizeof(struct channel_entry));
-        else if (!(pos & pos - 1)) channels[current_channel].playlist = realloc(channels[current_channel].playlist, pos * 2 * sizeof(struct channel_entry));
-        if (!channels[current_channel].playlist) {
-          printf("OOM\n");
-          return -1;
-        }
-        struct channel_entry *newentry = &channels[current_channel].playlist[pos];
-        sprintf(tmp, "%s/%s", VIDEO_PATH, s);
-        newentry->path = strdup(tmp);
-        if (!newentry->path) {
-          printf("OOM\n");
-          return -1;
-        }
-        newentry->flags = 0;
-        channels[current_channel].length++;
+      struct channel_entry *newentry = &channel->playlist[pos];
+      sprintf(tmp, "%s/%s", VIDEO_PATH, s);
+      newentry->path = strdup(tmp);
+      if (!newentry->path) {
+        printf("OOM\n");
+        return -1;
       }
+      newentry->flags = 0;
+      channel->length++;
     }
+  }
+  return 0;
+}
+int read_channels(struct channel *channels) {
+  for (int i = 0; i < MAXCHANNELS; i++) {
+    if (read_channel(channels + i, i) < 0) return -1;
   }
   return 0;
 }
@@ -256,46 +261,39 @@ void save_channels_state() {
   fclose(f);
 }
 
+void free_channel(struct channel * channel) {
+  for (int j = 0; j < channel->length; j++) if (channel->length) {
+    free(channel->playlist[j].path);
+  }
+  channel->length = 0;
+  if (channel->playlist) free(channel->playlist);
+  channel->playlist = 0;
+  if (channel->name) free(channel->name);
+  channel->name = 0;
+}
 void free_channels(struct channel *channels) {
   for (int i = 0; i < MAXCHANNELS; i++) {
-    for (int j = 0; j < channels[i].length; j++) if (channels[i].length) {
-      free(channels[i].playlist[j].path);
-    }
-    free(channels[i].playlist);
-    if (channels[i].name) free(channels[i].name);
+    free_channel(channels + i);
   }
 }
 
-void reload_channels() {
-  struct channel new_channels[MAXCHANNELS];
-  memset(new_channels, 0, sizeof(new_channels));
-  read_channels(new_channels);
-  for (int i = 0; i < MAXCHANNELS; i++) if (channels[i].length) {
+void reload_channel(int i) {
+  struct channel new_channel;
+  read_channel(&new_channel, i);
+  if (channels[i].length) {
     char *current_path = channels[i].playlist[channel_state[i].index].path;
     int new_pos = 0;
-    for (int j = 0; j < new_channels[i].length; j++) {
-      if (!strcmp(current_path, new_channels[i].playlist[j].path)) {
+    for (int j = 0; j < new_channel.length; j++) {
+      if (!strcmp(current_path, new_channel.playlist[j].path)) {
         new_pos = j;
-        printf("channel %d pos %d is now %d \n", i, channel_state[i].index, j);
         break;
       }
     }
     channel_state[i].index = new_pos;
   }
-  free_channels(channels);
-  memcpy(channels, new_channels, sizeof(new_channels));
+  free_channel(channels + i);
+  channels[i] = new_channel;
   save_channels_state();
-}
-
-void print_channels() {
-  for (int i = 0; i < MAXCHANNELS; i++) {
-    int len = channels[i].length;
-    if (!len) continue;
-    printf("# %d\n", i);
-    for (int j = 0; j < len; j++) {
-      // printf("%s\n", channels[i].playlist[j].path);
-    }
-  }
 }
 
 int osd_timeout = 0;
@@ -561,7 +559,7 @@ void process_input(void) {
     }
     if (msg[0] == 'C') {
       printf("Handling requests\n");
-      reload_channels();
+      reload_channel(atoi(msg + 1));
     }
   }
 }
