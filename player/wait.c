@@ -54,15 +54,15 @@ int playlist_current(int pos) {
 
 /* Channel setup END */
 
-pid_t cpid = 0;
-int state = 0;
-int64_t duration = 0;
+pid_t cpid = 0; // PID of the omxplayer process
+int state = 0; // Player state (one of PLAYER_*)
+int64_t duration = 0; // Current video duration in us queried after player starts
 #define PLAYER_STOPPED 0
 #define PLAYER_STARTING 1
 #define PLAYER_RUNNING 2
 #define PLAYER_STOPPING 3
 
-int aspect_mode = 0;
+int aspect_mode = 0; // Letterbox = 0, fit screen = 1
 int crop_x = -1;
 int crop_y = -1;
 int crop_w = -1;
@@ -120,13 +120,13 @@ double strap_alpha(int64_t now, int64_t start) {
   else return 0;
 }
 
-struct {
-  char *file;
-} playlist[] = {
-  { "/home/pi/Remind Me-2285902.mp4" },
-  { "/home/pi/Ugly Kid Joe - Cats In The Cradle-B32yjbCSVpU.mp4" },
-  { "/home/pi/Enigma - Return To Innocence-Rk_sAHh9s08.mp4" },
-};
+// struct {
+//   char *file;
+// } playlist[] = {
+//   { "/home/pi/Remind Me-2285902.mp4" },
+//   { "/home/pi/Ugly Kid Joe - Cats In The Cradle-B32yjbCSVpU.mp4" },
+//   { "/home/pi/Enigma - Return To Innocence-Rk_sAHh9s08.mp4" },
+// };
 #define MAXCHANNELS 100
 #define CHANNELDIGITS 2
 struct channel {
@@ -134,7 +134,6 @@ struct channel {
   int length;
   struct channel_entry {
     char *path;
-    int flags;
   } *playlist;
 } channels[MAXCHANNELS];
 
@@ -142,8 +141,8 @@ struct channel_state {
   int index;
   int position;
 } channel_state[MAXCHANNELS];
-int current_channel = 1;
-int current_position = 0;
+int current_channel = 0;
+int current_position = 0; // Play position in the current video in us
 
 #define CHANNELS_PATH "channels"
 #define VIDEO_PATH "/media/SSD/music videos"
@@ -166,7 +165,6 @@ int read_channel(struct channel *channel, int current_channel) {
     while (isspace(*s)) s++;
     if (ln == 1) {
       channel->name = strdup(s);
-      // TODO read channel name
     } else {
       int pos = channel->length;
       if (!pos) channel->playlist = malloc(sizeof(struct channel_entry));
@@ -182,7 +180,6 @@ int read_channel(struct channel *channel, int current_channel) {
         printf("OOM\n");
         return -1;
       }
-      newentry->flags = 0;
       channel->length++;
     }
   }
@@ -565,7 +562,6 @@ void process_input(void) {
 }
 int main(int argc, char *argv[]) {
   read_channels(channels);
-  print_channels();
   if (signal(SIGINT, signalHandler) == SIG_ERR || signal(SIGTERM, signalHandler) == SIG_ERR) {
     perror("installing signal handler");
     exit(EXIT_FAILURE);
