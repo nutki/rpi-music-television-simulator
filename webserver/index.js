@@ -101,10 +101,16 @@ function sleep(ms) {
 }
 let downloadCurrent;
 let downloadName;
+
+const updateDownloader = spawn('../yt-dlp', [ '--update' ]);
+const updateDownloaderPromise = new Promise(resolve => updateDownloader.on('exit', resolve))
+
 const downloadQue = new ProcessingQue(async (name) => {
   downloadCurrent = 0;
   downloadName = undefined;
   try {
+    console.log("Checking if downloader updated");
+    await updateDownloaderPromise;
     console.log("Downloading started", name);
     const tmpDir = path + '/.temp';
     if (!await exists(tmpDir)) {
