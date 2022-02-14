@@ -21,33 +21,13 @@ uint32_t rand_next () {
   return rand_seed >> 32;
 }
 
-
-
 static int random_order[MAX_PLAYLIST_CALC];
 static int playlist_len = 1;
-static int playlist_is_random;
 static void playlist_init(int len, int random, int channel) {
   playlist_len = len;
-  playlist_is_random = random;
   rand_seed = channel * 7 + 12345;
   if (playlist_len > 0) for (int i = 0; i < MAX_PLAYLIST_CALC; i++) {
     random_order[i] = rand_next() % playlist_len;
-  }
-}
-int playlist_update(int newlen, int oldpos, int newpos) {
-  // todo
-  return 0; // new pos
-}
-int playlist_set_random(int random) {
-  playlist_is_random = random;
-  return 0; // new pos
-}
-int playlist_current(int pos) {
-  if (!playlist_len) return 0;
-  if (playlist_is_random) {
-    return random_order[pos % MAX_PLAYLIST_CALC];
-  } else {
-    return pos % playlist_len;
   }
 }
 
@@ -140,9 +120,11 @@ struct channel {
 struct channel_state {
   int index;
   int position;
+  int is_random;
 } channel_state[MAXCHANNELS];
 int current_channel = 0;
 int current_position = 0; // Play position in the current video in us
+bool channel_is_random = false;
 
 #define CHANNELS_PATH "channels"
 #define VIDEO_PATH "/media/SSD/music videos"
@@ -234,17 +216,19 @@ void save_video_conf() {
 void read_channels_state() {
   FILE *f = fopen(CHANNEL_STATE_FILE, "r");
   if (!f) return;
-  int ch_nr, ch_pos, ch_fpos;
+  int ch_nr, ch_pos, ch_fpos, ch_random;
   fscanf(f, "%d%d", &ch_nr, &aspect_mode);
   if (!(ch_nr < 0 || ch_nr >= MAXCHANNELS)) current_channel = ch_nr;
-  while(fscanf(f, "%d%d%d", &ch_nr, &ch_pos, &ch_fpos) == 3) {
+  while(fscanf(f, "%d%d%d%d", &ch_nr, &ch_pos, &ch_fpos, &ch_random) == 4) {
     printf("%d %d %d\n", ch_nr, ch_pos, ch_fpos);
     if (ch_nr < 0 || ch_nr >= MAXCHANNELS) continue;
     channel_state[ch_nr].index = ch_pos;
     channel_state[ch_nr].position = ch_fpos;
+    channel_state[ch_nr].is_random = ch_random;
   }
   fclose(f);
   current_position = channel_state[current_channel].position;
+  channel_is_random = channel_state[current_channel].is_random;
 }
 void save_channels_state() {
   FILE *f = fopen(CHANNEL_STATE_FILE, "w");
@@ -252,7 +236,7 @@ void save_channels_state() {
   fprintf(f, "%d %d\n", current_channel, aspect_mode);
   for (int i = 0; i < MAXCHANNELS; i++) {
     if (channels[i].length) {
-      fprintf(f, "%d %d %d\n", i, channel_state[i].index, channel_state[i].position);
+      fprintf(f, "%d %d %d %d\n", i, channel_state[i].index, channel_state[i].position, channel_state[i].is_random);
     }
   }
   fclose(f);
@@ -302,15 +286,47 @@ void show_channel_prefix(int channel_digits, int channel_prefix) {
 
 bool changing_video = true;
 
+uint32_t inthash(uint32_t x) {
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = (x >> 16) ^ x;
+    return x;
+}
+
 int channel_convert_index(int ch, int len, int i) {
+  if (channel_is_random) {
+    return inthash((i << 20) | (len << 10) | ch)%len;
+  }
   int mod = i % len;
   return mod < 0 ? mod + len : mod;
 }
+int channel_reverse_convert_index(int ch, int len, int i, int old) {
+  for (int j = 0; j < 10 * len; j++) {
+    int cand = j%2 ? old - j/2 - 1: old + j/2;
+    if (i == channel_convert_index(ch, len, cand)) {
+      printf("Searching for index %d in channel %d, found %d (refrence %d)\n", i, ch, cand, old);
+      return cand;
+    }
+  }
+  printf("Reverse search failed for channel %d index %d\n", ch, i);
+  return old;
+}
+
+void channel_set_random(bool v) {
+  if (v == channel_is_random) return;
+  struct channel *ch = channels + current_channel;
+  struct channel_state *s = channel_state + current_channel;
+  int i = channel_convert_index(current_channel, ch->length, s->index);
+  s->is_random = channel_is_random = v;
+  s->index = channel_reverse_convert_index(current_channel, ch->length, i, s->index);
+  save_channels_state();
+}
+
 int channel_find_file(int nr, char *file) {
   struct channel *ch = channels + nr;
   for (int i = 0; i < ch->length; i++) {
     if (!strcmp(ch->playlist[i].path, file)) {
-      channel_state[nr].index = i;
+      channel_state[nr].index = channel_reverse_convert_index(nr, ch->length, i, channel_state[nr].index);
       return 1;
     }
   }
@@ -362,6 +378,7 @@ void switch_to_channel(int nr) {
   if (ce) {
     read_video_conf(ce->path);
     current_position = s->position;
+    channel_is_random = s->is_random;
   }
   save_channels_state();
   show_channel();
@@ -407,6 +424,7 @@ void channel_set_file(char *file) {
       return;
     }
     current_channel = 0;
+    channel_is_random = channel_state[current_channel].is_random;
   }
   struct channel_state *s = channel_state + current_channel;
   struct channel_entry *ce = channel_current_entry();
@@ -503,6 +521,10 @@ void seek_video(int s) {
   sprintf(buf, "SEEK %ds: (%d:%02d/%d:%02d)", s, pos / 60, pos % 60, len / 60, len %60);
   osd_show(buf);
 }
+void channel_toggle_random() {
+  channel_set_random(!channel_is_random);
+  osd_show(channel_is_random ? "SHUFFLE: ON": "SHUFFLE: OFF");
+}
 int64_t custom_show_strap_pos = 0;
 void process_input(void) {
   int keycode = 0;
@@ -521,6 +543,7 @@ void process_input(void) {
       if (keycode == 'w') channel_up();
       if (keycode == 's') channel_down();
       if (keycode >= '0' && keycode <= '9') channel_select(keycode - '0');
+      if (keycode == 'r') channel_toggle_random();
     }
     if (state == PLAYER_RUNNING) {
       if (keycode == ' ') {
