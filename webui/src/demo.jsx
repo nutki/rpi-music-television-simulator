@@ -6,6 +6,7 @@ import Tab from "@material-ui/core/Tab";
 import TextField from '@material-ui/core/TextField';
 import Badge from '@material-ui/core/Badge';
 import InputLabel from '@material-ui/core/InputLabel';
+import Grid from '@material-ui/core/Grid';
 
 const columns = [
   { title: 'Artist', field: 'meta.artist' },
@@ -449,6 +450,36 @@ function Channels({data}) {
   </>
 }
 
+const press = (key) => void fetch(uri`/api/press/${key}`);
+function RemoteKey({button, label}) {
+  return <Grid item xs={4}><Button variant="contained" style={{width: "100%"}} onClick={() => press(button)}>{label}</Button></Grid>;
+}
+function Remote() {
+  return <Grid container spacing={2} style={{width: 400, padding: 20}}>
+    <RemoteKey button="1" label="1" />
+    <RemoteKey button="2" label="2" />
+    <RemoteKey button="3" label="3" />
+    <RemoteKey button="4" label="4" />
+    <RemoteKey button="5" label="5" />
+    <RemoteKey button="6" label="6" />
+    <RemoteKey button="7" label="7" />
+    <RemoteKey button="8" label="8" />
+    <RemoteKey button="9" label="9" />
+    <RemoteKey button="x" label="Aspect" />
+    <RemoteKey button="0" label="0" />
+    <RemoteKey button="r" label="Shuffle" />
+    <RemoteKey button="," label="-30" />
+    <RemoteKey button="w" label="CH +" />
+    <RemoteKey button="." label="+30" />
+    <RemoteKey button="a" label="Prev" />
+    <RemoteKey button=" " label="Play" />
+    <RemoteKey button="d" label="Next" />
+    <RemoteKey button="<" label="-5" />
+    <RemoteKey button="w" label="CH -" />
+    <RemoteKey button=">" label="+5" />
+  </Grid>;
+}
+
 function Panel({visible, children}) {
   return <div hidden={!visible}>{children}</div>;
 }
@@ -517,7 +548,10 @@ export default function MaterialTableDemo() {
   const panel2 = <Panel visible={panelIdx === 2}>
     <DownloadsTable onAdd={() => setOpen(true)} data={downloads}/>
   </Panel>;
-  const downloadCount = downloads?.length || undefined;
+  const panel3 = <Panel visible={panelIdx === 3}>
+    <Remote />
+  </Panel>;
+const downloadCount = downloads?.length || undefined;
 
   return (
     <>
@@ -532,11 +566,13 @@ export default function MaterialTableDemo() {
           <Tab label="Videos" />
           <Tab label="Channels" />
           <Tab label={<Badge badgeContent={downloadCount} color="secondary">Downloads</Badge>} />
+          <Tab label="Player Remote" />
         </Tabs>
       </AppBar>
       {panel0}
       {panel1}
       {panel2}
+      {panel3}
       <DownloadModal open={open} setOpen={setOpen} />
     </>
   );

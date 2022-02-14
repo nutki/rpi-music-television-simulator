@@ -526,10 +526,7 @@ void channel_toggle_random() {
   osd_show(channel_is_random ? "SHUFFLE: ON": "SHUFFLE: OFF");
 }
 int64_t custom_show_strap_pos = 0;
-void process_input(void) {
-  int keycode = 0;
-  while ((keycode = term_getkey()) > 0) {
-    printf("GOT %d\n", keycode);
+void handle_keycode(int keycode) {
     if (state == PLAYER_STOPPED || state == PLAYER_RUNNING) {
       if (keycode == 'a' || keycode == 'd') {
         if (keycode == 'a') channel_prev();
@@ -576,6 +573,12 @@ void process_input(void) {
     if (keycode == 'q') {
       signalHandler(0);
     }
+}
+void process_input(void) {
+  int keycode = 0;
+  while ((keycode = term_getkey()) > 0) {
+    printf("GOT %d\n", keycode);
+    handle_keycode(keycode);
   }
   char *msg;
   while(msg = comm_read()) {
@@ -586,6 +589,9 @@ void process_input(void) {
     if (msg[0] == 'C') {
       printf("Handling requests\n");
       reload_channel(atoi(msg + 1));
+    }
+    if (msg[0] == 'K') {
+      handle_keycode(msg[1]);
     }
   }
 }

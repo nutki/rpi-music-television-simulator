@@ -95,6 +95,10 @@ api.delete('/channel/:id', async (req, res) => {
   await channels_delete(req.params.id);
   res.json({});
 });
+api.get('/press/:id', async (req, res) => {
+  pingPlayer('K' + req.params.id);
+  res.json({});
+})
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
