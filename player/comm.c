@@ -4,9 +4,8 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <errno.h>
-#define SOCK_PATH  "/tmp/.mpv.socket"
 static int sfd;
-int comm_init() {
+int comm_init(const char *sockPath) {
     struct sockaddr_un server_sockaddr;
     sfd = socket(AF_UNIX, SOCK_DGRAM, 0);
     if (sfd < 0) {
@@ -14,8 +13,8 @@ int comm_init() {
         return -1;
     }
     server_sockaddr.sun_family = AF_UNIX;   
-    strcpy(server_sockaddr.sun_path, SOCK_PATH);
-    unlink(SOCK_PATH);
+    strcpy(server_sockaddr.sun_path, sockPath);
+    unlink(sockPath);
     int rc = bind(sfd, (struct sockaddr *) &server_sockaddr, sizeof(server_sockaddr));
     if (rc == -1){
         perror("BIND UNIX SOCKET");

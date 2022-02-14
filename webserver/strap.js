@@ -2,8 +2,6 @@ const fs = require("fs");
 const util = require('util');
 const execFile = util.promisify(require('child_process').execFile);
 
-const path = '/mnt/music videos';
-
 function hashCode(str) {
   let hash = 0;
   for (let i = 0; i < str.length; i++)
@@ -11,7 +9,7 @@ function hashCode(str) {
   return hash;
 };
 
-const template = fs.readFileSync("template_v3.svg", "utf8");
+const template = fs.readFileSync(require.resolve("./template_v3.svg"), "utf8");
 const TMP_FILE = "/tmp/.mpv.strap.svg";
 const chromeName = 'chromium-browser'; // 'google-chrome';
 function encodeXmlEntities(str) {
@@ -33,10 +31,9 @@ async function genStrapSvg(meta, output) {
 }
 async function genStrap(fileName) {
   const [, name] = fileName.match(/(.*)\.meta.json/) || [];
-  const metaFileName = path + "/" + fileName;
   try {
-    const strapFileName = path + '/' + name + '.strap.png';
-    const meta = JSON.parse(fs.readFileSync(metaFileName));
+    const strapFileName = name + '.strap.png';
+    const meta = JSON.parse(fs.readFileSync(fileName));
     console.log(name, strapFileName);
     await genStrapSvg(meta, strapFileName);
   } catch (e) {

@@ -15,9 +15,16 @@ const rename = promisify(fs.rename);
 const writeFile = promisify(fs.writeFile);
 const readFile = promisify(fs.readFile);
 const unlink = promisify(fs.unlink);
-const path = '/media/SSD/music videos';
 const { getMetaForFilename, queryMeta } = require('./meta');
 const { UnixDgramSocket } = require('unix-dgram-socket');
+
+const commSocket = '/tmp/.mpv.socket';
+const ytdPath = './yt-dlp';
+const videosPath = './videos';
+const webuiPath = 'webui/dist';
+const channelsPath = "channels";
+
+const inotifyPath = require.resolve('./inotify');
 
 const ProcessingQue = class {
   que = [];
@@ -43,7 +50,7 @@ const ProcessingQue = class {
 async function pingPlayer(msg) {
   try {
     const socket = new UnixDgramSocket();
-    socket.send(msg, '/tmp/.mpv.socket');
+    socket.send(msg, commSocket);
     socket.close();
   } catch(e) {
     console.log(e);
@@ -60,7 +67,7 @@ api.get('/list', async (req, res) => {
 });
 api.get('/video/:id/play', async (req, res) => {
   console.log('play', req.params.id);
-  await pingPlayer("P" + path + "/" + req.params.id);
+  await pingPlayer("P" + videosPath + "/" + req.params.id);
   res.json({});
 })
 api.get('/video/:id', async (req, res) => {
@@ -106,21 +113,18 @@ function sleep(ms) {
 let downloadCurrent;
 let downloadName;
 
-const updateDownloader = spawn('../yt-dlp', [ '--update' ]);
-const updateDownloaderPromise = new Promise(resolve => updateDownloader.on('exit', resolve))
+spawn(ytdPath, [ '--update' ]);
 
 const downloadQue = new ProcessingQue(async (name) => {
   downloadCurrent = 0;
   downloadName = undefined;
   try {
-    console.log("Checking if downloader updated");
-    await updateDownloaderPromise;
     console.log("Downloading started", name);
-    const tmpDir = path + '/.temp';
+    const tmpDir = videosPath + '/.temp';
     if (!await exists(tmpDir)) {
       await mkdir(tmpDir);
     }
-    const youtubeDl = spawn('../yt-dlp', [ `-o${tmpDir}/%(title)s.%(ext)s`, '-f137+251/136+251/135+251/best', '--newline', name]);
+    const youtubeDl = spawn(ytdPath, [ `-o${tmpDir}/%(title)s.%(ext)s`, '-f137+251/136+251/135+251/best', '--newline', name]);
     youtubeDl.stdout.on('data', data => {
       const line = data.toString();
       const [ , pct ] = line.match(/\b(\d{1,3}(\.\d+))%/) || [];
@@ -130,7 +134,7 @@ const downloadQue = new ProcessingQue(async (name) => {
     });
     await new Promise(resolve => youtubeDl.on('exit', resolve));
     for (const file of await readdir(tmpDir)) {
-      await rename(tmpDir + '/' + file, path + '/' + file);
+      await rename(tmpDir + '/' + file, videosPath + '/' + file);
     }
   } catch (e) {
     console.log("error", e);
@@ -152,12 +156,12 @@ api.get('/download', (req, res) => {
 })
 
 app.use('/api', api);
-app.use('/', express.static('../webui/dist'));
-app.use('/videos', express.static(path));
+app.use('/', express.static(webuiPath));
+app.use('/videos', express.static(videosPath));
 
 app.listen(port, () => console.log(`Example app listening at http://localhost:${port}`));
 
-const inotify = spawn('./inotify', [path]);
+const inotify = spawn(inotifyPath, [videosPath]);
 const lb = new LineBuffer();
 const que = new ProcessingQue(async (name) => {
   console.log("generate strap for", name);
@@ -166,20 +170,20 @@ const que = new ProcessingQue(async (name) => {
 })
 const metaQue = new ProcessingQue(async (name) => {
   console.log("generate meta for", name);
-  await getMetaForFilename(path, name);
+  await getMetaForFilename(videosPath, name);
   console.log("meta done");
 })
 const channelsQue = new ProcessingQue(async () => {
   console.log("(re-)generating channels.txt");
-  const files = (await readdir(path, { withFileTypes: true }))
+  const files = (await readdir(videosPath, { withFileTypes: true }))
     .filter(f => f.isFile() && f.name.match(/\.(mkv|mp4|mov)$/))
-  await writeFile("../channels/0.txt", "\n" + files.map(f => f.name + "\n").join(""));
+  await writeFile(channelsPath + "/0.txt", "\n" + files.map(f => f.name + "\n").join(""));
   await pingPlayer("C0");
   console.log("regenerating done");
 });
 inotify.stdout.on('data', data => lb.feed(data).map(line => JSON.parse(line)).forEach(ev => {
   console.log(ev);
-  if (ev.name.endsWith('.meta.json') && ev.type == '>') que.add(ev.name);
+  if (ev.name.endsWith('.meta.json') && ev.type == '>') que.add(videosPath + "/" + ev.name);
   if ((ev.name.endsWith('.mkv') || ev.name.endsWith('.mp4') || ev.name.endsWith('.mov')) && ev.type == '>')
     metaQue.add(ev.name);
   if (ev.name.endsWith('.mkv') || ev.name.endsWith('.mp4') || ev.name.endsWith('.mov'))
@@ -188,10 +192,10 @@ inotify.stdout.on('data', data => lb.feed(data).map(line => JSON.parse(line)).fo
 
 const channels_list = async () => {
   const channels = {};
-  for (const file of await readdir("../channels")) {
+  for (const file of await readdir(channelsPath)) {
     const [m, nr] = file.match(/^(\d+).txt$/);
     if (m) {
-      const contents = (await readFile("../channels/" + m)).toString().split("\n");
+      const contents = (await readFile(channelsPath + "/" + m)).toString().split("\n");
       channels[nr] = { name: contents[0] || undefined, length: contents.length - 2 };
     }
   }
@@ -199,8 +203,8 @@ const channels_list = async () => {
 }
 const channels_get_entries = async (nr) => {
   const channel = { entries: [], name: "" };
-  if (!await exists("../channels/" + nr + ".txt")) return channel;
-  const contents = (await readFile("../channels/" + nr + ".txt")).toString().split("\n");
+  if (!await exists(channelsPath + "/" + nr + ".txt")) return channel;
+  const contents = (await readFile(channelsPath + "/" + nr + ".txt")).toString().split("\n");
   channel.name = contents.shift();
   for (const line of contents) if (line) {
     channel.entries.push(line);
@@ -209,9 +213,9 @@ const channels_get_entries = async (nr) => {
 }
 const channels_set_entries = async (nr, name, entries) => {
   const contents = name + "\n" + entries.map(x => x + "\n").join("");
-  await writeFile("../channels/" + nr + ".txt", contents);
+  await writeFile(channelsPath + "/" + nr + ".txt", contents);
   pingPlayer("C" + nr);
 }
 const channels_delete = async (nr) => {
-  if (await exists("../channels/" + nr + ".txt")) await unlink("../channels/" + nr + ".txt");
+  if (await exists(channelsPath + "/" + nr + ".txt")) await unlink(channelsPath + "/" + nr + ".txt");
 }

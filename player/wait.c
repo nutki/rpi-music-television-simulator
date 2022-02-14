@@ -12,6 +12,12 @@
 #include "terminput.h"
 #include "comm.h"
 
+#define OMXPLAYER_PATH "omxplayer.bin"
+#define CHANNELS_PATH "channels"
+#define VIDEO_PATH "./videos"
+#define CHANNEL_STATE_FILE "channels_state.txt"
+#define COMM_SOCKET_PATH  "/tmp/.mpv.socket"
+
 /* Playlist setup */
 
 #define MAX_PLAYLIST_CALC (64*1024)
@@ -64,7 +70,7 @@ int start_player(char *f, int start) {
   }
   if (cpid == 0) {
     printf("Child PID is %ld\n", (long) getpid());
-    execlp("omxplayer.bin","omxplayer", "--no-keys", "--no-osd", "--aspect-mode", aspect_mode ? "fill" : "letterbox", start_param, f, crop_x>=0?"--crop": 0, crop_x>=0?crop_param: 0, 0);
+    execlp(OMXPLAYER_PATH, "omxplayer", "--no-keys", "--no-osd", "--aspect-mode", aspect_mode ? "fill" : "letterbox", start_param, f, crop_x>=0?"--crop": 0, crop_x>=0?crop_param: 0, 0);
     perror("exec omxplayer\n");
     exit(EXIT_FAILURE);
   }
@@ -126,8 +132,6 @@ int current_channel = 0;
 int current_position = 0; // Play position in the current video in us
 bool channel_is_random = false;
 
-#define CHANNELS_PATH "channels"
-#define VIDEO_PATH "/media/SSD/music videos"
 int read_channel(struct channel *channel, int current_channel) {
   char linebuf[1024], *s, tmp[1024*2];
   sprintf(linebuf, "%s/%d.txt", CHANNELS_PATH, current_channel);
@@ -212,7 +216,6 @@ void save_video_conf() {
 }
 
 
-#define CHANNEL_STATE_FILE "channels_state.txt"
 void read_channels_state() {
   FILE *f = fopen(CHANNEL_STATE_FILE, "r");
   if (!f) return;
@@ -604,7 +607,7 @@ int main(int argc, char *argv[]) {
   dispmanx_init();
   blank_background();
   dbus_init();
-  comm_init();
+  comm_init(COMM_SOCKET_PATH);
   term_setup();
   read_channels_state();
   for(int64_t frame = 0;; frame++) {
