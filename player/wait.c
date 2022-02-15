@@ -298,7 +298,7 @@ uint32_t inthash(uint32_t x) {
 
 int channel_convert_index(int ch, int len, int i) {
   if (channel_is_random) {
-    return inthash((i << 20) | (len << 10) | ch)%len;
+    return inthash((ch << 24) ^ (len << 12) ^ i)%len;
   }
   int mod = i % len;
   return mod < 0 ? mod + len : mod;
