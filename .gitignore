@@ -63,6 +63,7 @@ Makefile
 CMakeScripts
 compile_commands.json
 player/mpvplayer
+player/cecinput
 webserver/inotify
 
 #node
