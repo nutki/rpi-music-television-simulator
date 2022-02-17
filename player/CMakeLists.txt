@@ -1,3 +1,5 @@
+add_executable (cecinput cec.cc)
+target_link_libraries(cecinput dl cec)
 add_executable (mpvplayer wait.c loadpng.c dbus.c dispmanx.c terminput.c vcrfont.c comm.c)
 find_library(LIB_BCM_HOST bcm_host PATHS /opt/vc/lib)
 target_link_libraries(mpvplayer ${LIB_BCM_HOST} png dbus-1)

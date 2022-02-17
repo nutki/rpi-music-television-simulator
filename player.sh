@@ -2,6 +2,8 @@
 #
 # DBUS setup copied from the OMXPlayer launcher script.
 #
+trap "exit" INT TERM
+trap "kill 0" EXIT
 
 DBUS_CMD="dbus-daemon --fork --print-address 5 --print-pid 6 --session"
 OMXPLAYER_DBUS_ADDR="/tmp/omxplayerdbus.${USER:-root}"
@@ -28,4 +30,5 @@ PLAYER_DIR=`dirname $0`
 
 cd "$PLAYER_DIR"
 
+player/cecinput &
 player/mpvplayer "$@"
