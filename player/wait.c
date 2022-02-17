@@ -77,6 +77,7 @@ int start_player(char *f, int start) {
   state = PLAYER_STARTING;
   return 0;
 }
+int64_t last_reported_position = -1;
 int check_ifstopped() {
   int status;
   if (cpid <= 0) return 0;
@@ -92,6 +93,7 @@ int check_ifstopped() {
     }
     state = PLAYER_STOPPED;
     cpid = 0;
+    printf("Playback stoped at %.3f of %.3f\n", last_reported_position/1000000., duration/1000000.);
   }
   return 0;
 }
@@ -639,8 +641,9 @@ int main(int argc, char *argv[]) {
       case PLAYER_RUNNING:
         current_position = query("Position");
         if (current_position > 0) {
+          last_reported_position = current_position;
           channel_state[current_channel].position = current_position;
-          printf("%10.3f/%10.3f\r", current_position / 1000000., duration / 1000000.); fflush(stdout);
+//          printf("%10.3f/%10.3f\r", current_position / 1000000., duration / 1000000.); fflush(stdout);
           double a = strap_alpha(current_position, 2 * 1000 * 1000 + video_start_pos * 1000);
           double b = strap_alpha(current_position, duration - (2 + STRAP_DURATION_SEC) * 1000 * 1000);
           double max = a > b ? a : b;
