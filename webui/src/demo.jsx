@@ -450,7 +450,10 @@ function Channels({data}) {
   </>
 }
 
-const press = (key) => void fetch(uri`/api/press/${key}`);
+const press = (key) => {
+  console.log("Pressiing ", uri`/api/press/${key}`);
+  fetch(uri`/api/press/${key}`)
+};
 function RemoteKey({button, label}) {
   return <Grid item xs={4}><Button variant="contained" style={{width: "100%"}} onClick={() => press(button)}>{label}</Button></Grid>;
 }
@@ -475,7 +478,7 @@ function Remote() {
     <RemoteKey button=" " label="Play" />
     <RemoteKey button="d" label="Next" />
     <RemoteKey button="<" label="-5" />
-    <RemoteKey button="w" label="CH -" />
+    <RemoteKey button="s" label="CH -" />
     <RemoteKey button=">" label="+5" />
   </Grid>;
 }
