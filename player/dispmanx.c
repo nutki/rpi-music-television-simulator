@@ -89,6 +89,8 @@ void dispmanx_init() {
 	display
 		= vc_dispmanx_display_open(displayNumber);
 	assert(display != 0);
+  TV_DISPLAY_STATE_T tvstate;
+  vc_tv_get_display_state(&tvstate);
 
   DISPMANX_MODEINFO_T display_info;
   int ret = vc_dispmanx_display_get_info(display, &display_info);
@@ -97,6 +99,21 @@ void dispmanx_init() {
   screenY = display_info.height;
   int aspectX = 16;
   int aspectY = 9;
+  if(tvstate.state & (VC_HDMI_HDMI | VC_HDMI_DVI)) switch (tvstate.display.hdmi.aspect_ratio) {
+    case HDMI_ASPECT_4_3:   aspectX = 4;  aspectY = 3;  break;
+    case HDMI_ASPECT_14_9:  aspectX = 14; aspectY = 9;  break;
+    default:
+    case HDMI_ASPECT_16_9:  aspectX = 16; aspectY = 9;  break;
+    case HDMI_ASPECT_5_4:   aspectX = 5;  aspectY = 4;  break;
+    case HDMI_ASPECT_16_10: aspectX = 16; aspectY = 10; break;
+    case HDMI_ASPECT_15_9:  aspectX = 15; aspectY = 9;  break;
+    case HDMI_ASPECT_64_27: aspectX = 64; aspectY = 27; break;
+  } else switch (tvstate.display.sdtv.display_options.aspect) {
+    default:
+    case SDTV_ASPECT_4_3:  aspectX = 4, aspectY = 3;  break;
+    case SDTV_ASPECT_14_9: aspectX = 14, aspectY = 9; break;
+    case SDTV_ASPECT_16_9: aspectX = 16, aspectY = 9; break;
+  }
   screenXoffset = (screenX - screenX * aspectY * 16 / 9 / aspectX) / 2;
   int screenOsdXoffset = (screenX - screenX * aspectY * 4 / 3 / aspectX) / 2;
 
