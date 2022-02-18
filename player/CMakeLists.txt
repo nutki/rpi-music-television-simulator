@@ -1,3 +1,4 @@
+add_executable(sdtv_ctl sdtv_ctl.c)
 add_executable (cecinput cec.cc)
 target_link_libraries(cecinput dl cec)
 add_executable (mpvplayer wait.c loadpng.c dbus.c dispmanx.c terminput.c vcrfont.c comm.c)
