@@ -185,6 +185,7 @@ static char *conf_filename;
 void read_video_conf(const char *filename) {
   crop_w = crop_h = crop_x = crop_y = -1;
   video_start_pos = 0;
+  video_end_pos = -1;
   if (conf_filename) free(conf_filename);
   char *dotptr = strrchr(filename, '.');
   int dotpos = dotptr ? dotptr - filename : strlen(filename);
@@ -202,6 +203,9 @@ void read_video_conf(const char *filename) {
     }
     if (c == 'S') {
       fscanf(f, "%d", &video_start_pos);
+    }
+    if (c == 'E') {
+      fscanf(f, "%d", &video_end_pos);
     }
   }
   printf("loading conf end\n");
@@ -512,7 +516,7 @@ void mark_video_end() {
   video_end_pos = video_end_pos >= 0 ? -1 : current_position / 1000;
   char text[256];
   sprintf(text, "END MARK: %d.%ds", video_end_pos / 1000, video_end_pos / 100 % 10);
-  osd_show(video_end_pos ? text : "END MARK RESET");
+  osd_show(video_end_pos >= 0 ? text : "END MARK RESET");
   save_video_conf();
   video_end_pos = -1;
 }
