@@ -649,7 +649,8 @@ int main(int argc, char *argv[]) {
           channel_state[current_channel].position = current_position;
 //          printf("%10.3f/%10.3f\r", current_position / 1000000., duration / 1000000.); fflush(stdout);
           double a = strap_alpha(current_position, 2 * 1000 * 1000 + video_start_pos * 1000);
-          double b = strap_alpha(current_position, duration - (2 + STRAP_DURATION_SEC) * 1000 * 1000);
+          long long end_pos = video_end_pos >= 0 ? video_end_pos * 1000 : duration;
+          double b = strap_alpha(current_position, end_pos - (2 + STRAP_DURATION_SEC) * 1000 * 1000);
           double max = a > b ? a : b;
           double c = strap_alpha(current_position, custom_show_strap_pos);
           if (c > max) max = c;
