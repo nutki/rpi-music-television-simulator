@@ -181,7 +181,8 @@ function useDownloads() {
   useInterval(load, 1000);
   return data;
 }
-function DownloadsTable({onAdd, data}) {
+function DownloadsTable({onAdd}) {
+  const data = useDownloads();
   return <>
     <MaterialTable
       title="Pending Downloads"
@@ -308,7 +309,10 @@ function DeleteChannelDialog({ open, value, onConfirm, onClose}) {
   );
 }
 
-function Channels({data}) {
+function Channels() {
+  const [data, setData] = React.useState();
+  const load = () => void fetch('/api/list').then(r => r.json()).then(r => setData(r));
+  React.useEffect(load, []);
   const [ channelName, setChannelName ] = React.useState();
   const [ channelIdx, setChannelIdx ] = React.useState(1);
   const [ channelEntries, setChannelEntries ] = React.useState();
@@ -489,18 +493,17 @@ function Panel({visible, children}) {
 
 let cnt = 0;
 
+function DownloadCountBadge() {
+  const downloads = useDownloads();
+  const downloadCount = downloads?.length || undefined;
+  return <Badge badgeContent={downloadCount} color="secondary">Downloads</Badge>;
+}
 
-
-export default function MaterialTableDemo() {
-  const [open, setOpen] = React.useState(false);
+function VideoList({onAdd}) {
   const [data, setData] = React.useState();
-  const [panelIdx, setPanelIdx] = React.useState(0);
-  console.log('Rendering', cnt++);
   const load = () => void fetch('/api/list').then(r => r.json()).then(r => setData(r));
   React.useEffect(load, []);
   useInterval(load, 5000);
-  const downloads = useDownloads();
-
   async function onRowUpdate(newData) {
     await postData('/api/update', newData);
     setData((prevState) => prevState.map(row => row.id === newData.id ? { ...row, ...newData } : row));
@@ -509,8 +512,7 @@ export default function MaterialTableDemo() {
     await postData('/api/delete', { id: oldData.id });
     setData((prevState) => prevState.filter(row => row.id != oldData.id));
   }
-  const panel0 = <Panel visible={panelIdx === 0}>
-    <MaterialTable
+  return <MaterialTable
       title=""
       columns={columns}
       isLoading={!data}
@@ -532,7 +534,7 @@ export default function MaterialTableDemo() {
           isFreeAction: true,
         },
         {
-          onClick: () => setOpen(true),
+          onClick: () => onAdd(),
           icon: 'add',
           tooltip: "Add Download URLs",
           isFreeAction: true,
@@ -544,31 +546,36 @@ export default function MaterialTableDemo() {
       }}
       detailPanel={row => <VideoDetail id={row.rowData.id} onRowUpdate={onRowUpdate}/>}
     />
+}
+
+export default function MaterialTableDemo() {
+  const [open, setOpen] = React.useState(false);
+  const [panelIdx, setPanelIdx] = React.useState(0);
+  console.log('Rendering', cnt++);
+
+  const panel0 = <Panel visible={panelIdx === 0}>
+    <VideoList onAdd={() => setOpen(true)} />
   </Panel>;
   const panel1 = <Panel visible={panelIdx === 1}>
-    <Channels data={data} />
+    <Channels />
   </Panel>;
   const panel2 = <Panel visible={panelIdx === 2}>
-    <DownloadsTable onAdd={() => setOpen(true)} data={downloads}/>
+    <DownloadsTable onAdd={() => setOpen(true)} />
   </Panel>;
   const panel3 = <Panel visible={panelIdx === 3}>
     <Remote />
   </Panel>;
-const downloadCount = downloads?.length || undefined;
 
   return (
     <>
       <AppBar position="static">
         <Tabs
           value={panelIdx}
-          onChange={(ev, val) => {
-            setPanelIdx(val);
-            if (val === 0) load();
-          }}
+          onChange={(ev, val) => setPanelIdx(val)}
         >
           <Tab label="Videos" />
           <Tab label="Channels" />
-          <Tab label={<Badge badgeContent={downloadCount} color="secondary">Downloads</Badge>} />
+          <Tab label={<DownloadCountBadge />} />
           <Tab label="Player Remote" />
         </Tabs>
       </AppBar>
