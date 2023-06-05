@@ -57,11 +57,13 @@ int video_width = -1;
 int video_height = -1;
 int video_start_pos = 0;
 int video_end_pos = -1;
+int volume_correction = 0;
 int start_player(char *f, int start) {
-  char start_param[32], crop_param[128];
+  char start_param[32], crop_param[128], volume_param[32];
   start /= 1000000;
   sprintf(start_param, "-l%02d:%02d:%02d", start/3600, start/60%60, start%60);
   sprintf(crop_param, "%d %d %d %d", crop_x, crop_y, crop_w + crop_x, crop_h + crop_y);
+  sprintf(volume_param, "%d", volume_correction);
   cpid = fork();
   if (cpid == -1) {
     perror("fork");
@@ -70,7 +72,7 @@ int start_player(char *f, int start) {
   }
   if (cpid == 0) {
     printf("Child PID is %ld\n", (long) getpid());
-    execlp(OMXPLAYER_PATH, "omxplayer", "--no-keys", "--no-osd", "--aspect-mode", aspect_mode ? "fill" : "letterbox", start_param, f, crop_x>=0?"--crop": 0, crop_x>=0?crop_param: 0, 0);
+    execlp(OMXPLAYER_PATH, "omxplayer", "--vol", volume_param, "--align", "center", "--no-keys", "--no-osd", "--aspect-mode", aspect_mode ? "fill" : "letterbox", start_param, f, crop_x>=0?"--crop": 0, crop_x>=0?crop_param: 0, 0);
     perror("exec omxplayer\n");
     exit(EXIT_FAILURE);
   }
@@ -186,6 +188,7 @@ void read_video_conf(const char *filename) {
   crop_w = crop_h = crop_x = crop_y = -1;
   video_start_pos = 0;
   video_end_pos = -1;
+  volume_correction = 0;
   if (conf_filename) free(conf_filename);
   char *dotptr = strrchr(filename, '.');
   int dotpos = dotptr ? dotptr - filename : strlen(filename);
@@ -207,8 +210,11 @@ void read_video_conf(const char *filename) {
     if (c == 'E') {
       fscanf(f, "%d", &video_end_pos);
     }
+    if (c == 'V') {
+      fscanf(f, "%d", &volume_correction);
+    }
   }
-  printf("loading conf end\n");
+  printf("loading conf end (%s)\n", conf_filename);
   fclose(f);
 }
 void save_video_conf() {
@@ -218,6 +224,7 @@ void save_video_conf() {
   if (crop_w >= 0 && (crop_w != video_width || crop_h != video_height)) fprintf(f, "C %d %d %d %d\n", crop_x, crop_y, crop_w, crop_h);
   if (video_start_pos) fprintf(f, "S %d\n", video_start_pos);
   if (video_end_pos) fprintf(f, "E %d\n", video_end_pos);
+  if (volume_correction) fprintf(f, "V %d\n", volume_correction);
   fclose(f);
 }
 
@@ -391,6 +398,7 @@ void switch_to_channel(int nr) {
   }
   save_channels_state();
   show_channel();
+  dispmanx_alpha(0);
   bg_mode(BG_MODE_BLUE);
   if (state == PLAYER_RUNNING) {
     dbus_quit();
@@ -530,6 +538,14 @@ void seek_video(int s) {
   sprintf(buf, "SEEK %ds: (%d:%02d/%d:%02d)", s, pos / 60, pos % 60, len / 60, len %60);
   osd_show(buf);
 }
+void set_video_volume(int s) {
+  volume_correction += s;
+  dbus_volume(volume_correction);
+  char buf[128];
+  sprintf(buf, "VOL %+.1fdB", volume_correction/100.);
+  osd_show(buf);
+  save_video_conf();
+}
 void channel_toggle_random() {
   channel_set_random(!channel_is_random);
   osd_show(channel_is_random ? "SHUFFLE: ON": "SHUFFLE: OFF");
@@ -545,6 +561,7 @@ void handle_keycode(int keycode) {
           state = PLAYER_STOPPING;
         }
         changing_video = true;
+        dispmanx_alpha(0);
       }
       if (keycode == 'w') channel_up();
       if (keycode == 's') channel_down();
@@ -563,6 +580,8 @@ void handle_keycode(int keycode) {
       if (keycode == '.') seek_video(30);
       if (keycode == '<') seek_video(-5);
       if (keycode == '>') seek_video(5);
+      if (keycode == '[') set_video_volume(-50);
+      if (keycode == ']') set_video_volume(50);
       if (keycode == 'c') {
         crop_cycle();
       }
@@ -616,6 +635,8 @@ int main(int argc, char *argv[]) {
   comm_init(COMM_SOCKET_PATH);
   term_setup();
   read_channels_state();
+  struct channel_entry *ce = channel_current_entry();
+  read_video_conf(ce->path);
   for(int64_t frame = 0;; frame++) {
     osd_update();
     if (state != PLAYER_STOPPED) check_ifstopped();
@@ -648,9 +669,9 @@ int main(int argc, char *argv[]) {
           last_reported_position = current_position;
           channel_state[current_channel].position = current_position;
 //          printf("%10.3f/%10.3f\r", current_position / 1000000., duration / 1000000.); fflush(stdout);
-          double a = strap_alpha(current_position, 2 * 1000 * 1000 + video_start_pos * 1000);
+          double a = strap_alpha(current_position, 4 * 1000 * 1000 + video_start_pos * 1000);
           long long end_pos = video_end_pos >= 0 ? video_end_pos * 1000 : duration;
-          double b = strap_alpha(current_position, end_pos - (2 + STRAP_DURATION_SEC) * 1000 * 1000);
+          double b = strap_alpha(current_position, end_pos - (4 + STRAP_DURATION_SEC) * 1000 * 1000);
           double max = a > b ? a : b;
           double c = strap_alpha(current_position, custom_show_strap_pos);
           if (c > max) max = c;

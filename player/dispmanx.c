@@ -61,7 +61,7 @@ void load_strap(char *path) {
 }
 static uint16_t osdbuf[OSD_W * VCR_FONT_H];
 static void put_pixel(int x, int y, int v) {
-  osdbuf[x + y * OSD_W] = v ? 0x0f0f : 0;
+  osdbuf[x + y * OSD_W + 16] = v ? 0x0f0f : 0;
 }
 void osd_text(const char * s, int align) {
 	VC_RECT_T osdRect2;
