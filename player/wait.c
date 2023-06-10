@@ -538,8 +538,24 @@ void seek_video(int s) {
   sprintf(buf, "SEEK %ds: (%d:%02d/%d:%02d)", s, pos / 60, pos % 60, len / 60, len %60);
   osd_show(buf);
 }
-void set_video_volume(int s) {
-  volume_correction += s;
+int start_volume_detect(void) {
+  char *f = channel_current_entry()->path;
+  int cpid = fork();
+  if (cpid == -1) {
+    perror("fork");
+    cpid = 0;
+    return -1;
+  }
+  if (cpid == 0) {
+    execlp("node", "node", "webserver/volume_correct.js", f, 0);
+    perror("exec node\n");
+    exit(EXIT_FAILURE);
+  }
+  osd_show("VOLUME DETECT");
+  return 0;
+}
+void set_video_volume(int s, bool absolute) {
+  volume_correction = absolute ? s : volume_correction + s;
   dbus_volume(volume_correction);
   char buf[128];
   sprintf(buf, "VOL %+.1fdB", volume_correction/100.);
@@ -580,8 +596,10 @@ void handle_keycode(int keycode) {
       if (keycode == '.') seek_video(30);
       if (keycode == '<') seek_video(-5);
       if (keycode == '>') seek_video(5);
-      if (keycode == '[') set_video_volume(-50);
-      if (keycode == ']') set_video_volume(50);
+      if (keycode == '[') set_video_volume(-50, false);
+      if (keycode == ']') set_video_volume(50, false);
+      if (keycode == '{') set_video_volume(0, true);
+      if (keycode == '}') start_volume_detect();
       if (keycode == 'c') {
         crop_cycle();
       }
@@ -620,6 +638,12 @@ void process_input(void) {
     }
     if (msg[0] == 'K') {
       handle_keycode(msg[1]);
+    }
+    if (msg[0] == 'D') {
+      osd_show(msg + 1);
+    }
+    if (msg[0] == 'V') {
+      set_video_volume(atoi(msg + 1), true);
     }
   }
 }
