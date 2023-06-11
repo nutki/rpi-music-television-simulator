@@ -57,6 +57,7 @@ int video_width = -1;
 int video_height = -1;
 int video_start_pos = 0;
 int video_end_pos = -1;
+bool video_end_was_set = false;
 int volume_correction = 0;
 int start_player(char *f, int start) {
   char start_param[32], crop_param[128], volume_param[32];
@@ -188,6 +189,7 @@ void read_video_conf(const char *filename) {
   crop_w = crop_h = crop_x = crop_y = -1;
   video_start_pos = 0;
   video_end_pos = -1;
+  video_end_was_set = false;
   volume_correction = 0;
   if (conf_filename) free(conf_filename);
   char *dotptr = strrchr(filename, '.');
@@ -219,13 +221,14 @@ void read_video_conf(const char *filename) {
 }
 void save_video_conf() {
   FILE *f = fopen(conf_filename, "w");
-  printf("CONF: %s\n", conf_filename);
   if (!f) return;
-  if (crop_w >= 0 && (crop_w != video_width || crop_h != video_height)) fprintf(f, "C %d %d %d %d\n", crop_x, crop_y, crop_w, crop_h);
-  if (video_start_pos) fprintf(f, "S %d\n", video_start_pos);
-  if (video_end_pos) fprintf(f, "E %d\n", video_end_pos);
-  if (volume_correction) fprintf(f, "V %d\n", volume_correction);
+  int c = 0;
+  if (crop_w >= 0 && (crop_w != video_width || crop_h != video_height)) fprintf(f, "C %d %d %d %d\n", crop_x, crop_y, crop_w, crop_h), c++;
+  if (video_start_pos) fprintf(f, "S %d\n", video_start_pos), c++;
+  if (video_end_pos != -1) fprintf(f, "E %d\n", video_end_pos), c++;
+  if (volume_correction) fprintf(f, "V %d\n", volume_correction), c++;
   fclose(f);
+  if (!c) unlink(conf_filename);
 }
 
 
@@ -526,7 +529,7 @@ void mark_video_end() {
   sprintf(text, "END MARK: %d.%ds", video_end_pos / 1000, video_end_pos / 100 % 10);
   osd_show(video_end_pos >= 0 ? text : "END MARK RESET");
   save_video_conf();
-  video_end_pos = -1;
+  video_end_was_set = true;
 }
 void seek_video(int s) {
   dbus_seek(s * 1000000LL);
@@ -701,7 +704,7 @@ int main(int argc, char *argv[]) {
           if (c > max) max = c;
           dispmanx_alpha((int)(max * 200));
         }
-        if (video_end_pos != -1 && current_position >= video_end_pos * 1000) {
+        if (video_end_pos != -1 && current_position >= video_end_pos * 1000 && !video_end_was_set) {
           dbus_quit();
           state = PLAYER_STOPPING;
         }
