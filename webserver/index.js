@@ -134,7 +134,8 @@ const downloadQue = new ProcessingQue(async (name) => {
     });
     await new Promise(resolve => youtubeDl.on('exit', resolve));
     for (const file of await readdir(tmpDir)) {
-      await rename(tmpDir + '/' + file, videosPath + '/' + file);
+      const dstfile = file.replace(/\.en[^.]*\.srt/, '.srt');
+      await rename(tmpDir + '/' + file, videosPath + '/' + dstfile);
     }
   } catch (e) {
     console.log("error", e);
