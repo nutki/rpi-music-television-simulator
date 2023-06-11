@@ -49,6 +49,8 @@ int64_t duration = 0; // Current video duration in us queried after player start
 #define PLAYER_STOPPING 3
 
 int aspect_mode = 0; // Letterbox = 0, fit screen = 1
+int show_subtitles = 0;
+int has_subtitles = 0;
 int crop_x = -1;
 int crop_y = -1;
 int crop_w = -1;
@@ -236,7 +238,7 @@ void read_channels_state() {
   FILE *f = fopen(CHANNEL_STATE_FILE, "r");
   if (!f) return;
   int ch_nr, ch_pos, ch_fpos, ch_random;
-  fscanf(f, "%d%d", &ch_nr, &aspect_mode);
+  fscanf(f, "%d%d%d", &ch_nr, &aspect_mode, &show_subtitles);
   if (!(ch_nr < 0 || ch_nr >= MAXCHANNELS)) current_channel = ch_nr;
   while(fscanf(f, "%d%d%d%d", &ch_nr, &ch_pos, &ch_fpos, &ch_random) == 4) {
     printf("%d %d %d\n", ch_nr, ch_pos, ch_fpos);
@@ -252,7 +254,7 @@ void read_channels_state() {
 void save_channels_state() {
   FILE *f = fopen(CHANNEL_STATE_FILE, "w");
   if (!f) return;
-  fprintf(f, "%d %d\n", current_channel, aspect_mode);
+  fprintf(f, "%d %d %d\n", current_channel, aspect_mode, show_subtitles);
   for (int i = 0; i < MAXCHANNELS; i++) {
     if (channels[i].length) {
       fprintf(f, "%d %d %d %d\n", i, channel_state[i].index, channel_state[i].position, channel_state[i].is_random);
@@ -569,6 +571,19 @@ void channel_toggle_random() {
   channel_set_random(!channel_is_random);
   osd_show(channel_is_random ? "SHUFFLE: ON": "SHUFFLE: OFF");
 }
+#define SUBTITLE_EXT ".srt"
+void check_subtitles(char *filename) {
+  char *subtitle_filename;
+  char *dotptr = strrchr(filename, '.');
+  int dotpos = dotptr ? dotptr - filename : strlen(filename);
+  subtitle_filename = malloc(dotpos + sizeof(SUBTITLE_EXT));
+  memcpy(subtitle_filename, filename, dotpos);
+  memcpy(subtitle_filename + dotpos, SUBTITLE_EXT, sizeof(SUBTITLE_EXT));
+  has_subtitles = access(subtitle_filename, F_OK) == 0;
+}
+void set_subtitles() {
+  if (has_subtitles) dbus_action(show_subtitles ? "ShowSubtitles" : "HideSubtitles");
+}
 int64_t custom_show_strap_pos = 0;
 void handle_keycode(int keycode) {
     if (state == PLAYER_STOPPED || state == PLAYER_RUNNING) {
@@ -610,6 +625,12 @@ void handle_keycode(int keycode) {
         aspect_mode = !aspect_mode;
         dbus_aspect_mode(aspect_mode ? "fill" : "letterbox");
         osd_show(aspect_mode ? "ASPECT: FILL FRAME" : "ASPECT: LETTERBOX");
+        save_channels_state();
+      }
+      if (keycode == 't') {
+        show_subtitles = !show_subtitles;
+        set_subtitles();
+        osd_show(show_subtitles ? "SUBTITLES ON" : "SUBTITLES OFF");
         save_channels_state();
       }
       if (keycode == 'b') {
@@ -686,6 +707,8 @@ int main(int argc, char *argv[]) {
         if (duration > 0) {
           video_width = query("ResWidth");
           video_height = query("ResHeight");
+          check_subtitles(ce->path);
+          set_subtitles();
           state = PLAYER_RUNNING;
           bg_mode(BG_MODE_BLACK);
         }
