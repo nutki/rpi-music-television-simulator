@@ -467,7 +467,7 @@ void reload_channel(int i) {
   struct channel_entry *old_ce = channel_entry(i);
   read_channel(ch, i);
   if (ch->length) {
-    if (!channel_find_file(i, old_ce->path)) {
+    if (!old_ce || !channel_find_file(i, old_ce->path)) {
       channel_state[i].index = 0;
       channel_state[i].position = 0;
     }
