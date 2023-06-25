@@ -4,6 +4,7 @@
 #include <bcm_host.h>
 #include "image.h"
 #include "vcrfont.h"
+#include "teletext.h"
 
 #define ELEMENT_CHANGE_LAYER (1<<0)
 #define ELEMENT_CHANGE_OPACITY (1<<1)
@@ -20,7 +21,7 @@ static DISPMANX_ELEMENT_HANDLE_T element;
 static uint64_t last_strap_alpha = 0;
 #define SCREENX 1920
 #define SCREENY 1080
-static int screenX, screenY, screenXoffset;
+static int screenX, screenY, screenXoffset, screen_y_shift;
 #define STRAP_EXT ".strap.png"
 
 static DISPMANX_RESOURCE_HANDLE_T osd_resource;
@@ -78,7 +79,13 @@ void osd_text_clear() {
     vc_dispmanx_resource_write_data(
       osd_resource, VC_IMAGE_RGBA16, OSD_W * 2, &osdbuf, &osdRect2);  
 }
-void dispmanx_init() {
+char *dispmanx_shifted_window(void) {
+  static char buf[100];
+  if (!screen_y_shift) return 0;
+  sprintf(buf, "%d %d %d %d", 0, screen_y_shift, screenX, screenY + screen_y_shift);
+  return buf;
+}
+void dispmanx_init(int shift) {
 	int32_t layer = 10;
 	u_int32_t displayNumber = 0;
 	int result = 0;
@@ -97,6 +104,10 @@ void dispmanx_init() {
   assert(ret == 0);
   screenX = display_info.width;
   screenY = display_info.height;
+  if ((tvstate.display.sdtv.mode & SDTV_MODE_FORMAT_MASK) == SDTV_MODE_PAL) {
+    printf("PAL detected - initializing teletext\n");
+    screen_y_shift = teletext_init();
+  }
   int aspectX = 16;
   int aspectY = 9;
   if(tvstate.state & (VC_HDMI_HDMI | VC_HDMI_DVI)) switch (tvstate.display.hdmi.aspect_ratio) {
@@ -137,8 +148,8 @@ void dispmanx_init() {
   int screenOsdX = screenX - 2 * screenOsdXoffset;
 	vc_dispmanx_rect_set(&srcRect, 0, 0, SCREENX << 16, SCREENY << 16);
 	vc_dispmanx_rect_set(&osdSrcRect, 0, 0, OSD_W << 16, OSD_H << 16);
-	vc_dispmanx_rect_set(&dstRect, screenXoffset, 0, screenX - 2 * screenXoffset, screenY);
-	vc_dispmanx_rect_set(&osdDstRect, screenOsdXoffset + screenOsdX/18, screenY / 18, screenOsdX * 8 / 9, screenY * 8 / 9);
+	vc_dispmanx_rect_set(&dstRect, screenXoffset, screen_y_shift, screenX - 2 * screenXoffset, screenY);
+	vc_dispmanx_rect_set(&osdDstRect, screenOsdXoffset + screenOsdX/18, screenY / 18 + screen_y_shift, screenOsdX * 8 / 9, screenY * 8 / 9);
 
 	// Add element to vc
         last_strap_alpha = 0;
@@ -223,6 +234,7 @@ void bg_mode(int mode) {
 
 void dispmanx_close() {
         int result;
+        teletext_close();
 	DISPMANX_UPDATE_HANDLE_T update = vc_dispmanx_update_start(0);
 	if (element) result = vc_dispmanx_element_remove(update, element);
 	if (bg_element) result = vc_dispmanx_element_remove(update, bg_element);

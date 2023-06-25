@@ -10,3 +10,4 @@ void osd_text_clear();
 #define BG_MODE_BLUE 1
 #define BG_MODE_NOISE 2
 void bg_mode(int mode);
+char *dispmanx_shifted_window(void);

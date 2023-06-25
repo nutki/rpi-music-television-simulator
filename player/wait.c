@@ -75,7 +75,30 @@ int start_player(char *f, int start) {
   }
   if (cpid == 0) {
     printf("Child PID is %ld\n", (long) getpid());
-    execlp(OMXPLAYER_PATH, "omxplayer", "--vol", volume_param, "--align", "center", "--no-keys", "--no-osd", "--aspect-mode", aspect_mode ? "fill" : "letterbox", start_param, f, crop_x>=0?"--crop": 0, crop_x>=0?crop_param: 0, 0);
+    char *params[128], **nextparam = params;
+    *nextparam++ = "omxplayer";
+    *nextparam++ = "--vol";
+    *nextparam++ = volume_param;
+    *nextparam++ = "--align";
+    *nextparam++ = "center";
+    *nextparam++ = "--no-keys";
+    *nextparam++ = "--no-osd";
+    *nextparam++ = "--aspect-mode";
+    *nextparam++ = aspect_mode ? "fill" : "letterbox";
+    *nextparam++ = start_param;
+    *nextparam++ = f;
+    if (crop_x>=0) {
+      *nextparam++ = "--crop";
+      *nextparam++ = crop_param;
+    }
+    char *win = dispmanx_shifted_window();
+    if (win) {
+      *nextparam++ = "--win";
+      *nextparam++ = win;
+    }
+    *nextparam++ = 0;
+    execvp(OMXPLAYER_PATH, params);
+//    execlp(OMXPLAYER_PATH, "omxplayer", "--vol", volume_param, "--align", "center", "--no-keys", "--no-osd", "--aspect-mode", aspect_mode ? "fill" : "letterbox", start_param, f, crop_x>=0?"--crop": 0, crop_x>=0?crop_param: 0, 0);
     perror("exec omxplayer\n");
     exit(EXIT_FAILURE);
   }
