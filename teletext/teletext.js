@@ -1,5 +1,6 @@
 const { spawn } = require('child_process');
 const { readFileSync } = require('fs');
+const { exit } = require('process');
 
 const parity = [
   0x80,0x01,0x02,0x83,0x04,0x85,0x86,0x07,0x08,0x89,0x8A,0x0B,0x8C,0x0D,0x0E,0x8F,
@@ -11,6 +12,7 @@ const parity = [
   0xE0,0x61,0x62,0xE3,0x64,0xE5,0xE6,0x67,0x68,0xE9,0xEA,0x6B,0xEC,0x6D,0x6E,0xEF,
   0x70,0xF1,0xF2,0x73,0xF4,0x75,0x76,0xF7,0xF8,0x79,0x7A,0xFB,0x7C,0xFD,0xFE,0x7F];
 const hamming84 = [0x15,0x02,0x49,0x5E,0x64,0x73,0x38,0x2F,0xD0,0xC7,0x8C,0x9B,0xA1,0xB6,0xFD,0xEA];
+const unhamming84 = x => hamming84.indexOf(x);
 
 
 function sleep(ms) {
@@ -27,10 +29,10 @@ const sendTeletext = async (buffer) => {
 
 // Create the child process
 const childProcess = spawn('../raspi-teletext/teletext', ['-']);
-const fileContent = readFileSync('P101-0003.t42');
+const fileContent = readFileSync('P101-0005.t42');
 
 const printAt = (str, x, y) => {
-  let pos = y * 40 + x + 2;
+  let pos = y * 42 + x + 2;
   for (const ch of str) {
     fileContent.writeUInt8(parity[ch.charCodeAt(0)], pos++);
   }
@@ -100,10 +102,32 @@ const addTime = () => {
 }
 
 async function main() {
+  fileContent.writeUInt8(hamming84[0], 2);
+  const y27 = generateBinaryPacket();
+  setPacketAddress(y27, 0, 1, 27, 0);
+  for (let i = 0; i < 6; i++) {
+    y27.writeUInt8(hamming84[i*2], i*6 + 3);
+    y27.writeUInt8(hamming84[1], i*6 + 4);
+    y27.writeUInt8(hamming84[0xf], i*6 + 5);
+    y27.writeUInt8(hamming84[0x7], i*6 + 6);
+    y27.writeUInt8(hamming84[0xf], i*6 + 7);
+    y27.writeUInt8(hamming84[0x3], i*6 + 8);
+  }
+  y27.writeUInt8(hamming84[0xf], 39);
+  y27.writeUInt8(hamming84[0x0], 40);
+  y27.writeUInt8(hamming84[0x0], 41);
   for (let i = 0;; i++) {
-   printAt(YELLOW + "MTVText", 11, 0);
-   addTime();
-    await sendTeletext(fileContent);
+    fileContent.writeUInt8(hamming84[i%30==1?8:0], 7); //subtitle
+//    fileContent.writeUInt8(hamming84[i%30==1?8:0], 5); //erase
+    fileContent.writeUInt8(hamming84[i%10], 2);
+    fileContent.writeUInt8(hamming84[Math.floor(i%30/10)], 3);
+    printAt(YELLOW + "MTVText"+i%10, 11, 0);
+    printAt(START_BOX+START_BOX+"Hello!"+END_BOX+END_BOX, 15, 23);
+    addTime();
+//    console.log(fileContent.readUInt8(420), fileContent.readUInt8(421));
+//    console.log(fileContent.readUInt8(420), fileContent.readUInt8(421));
+    await sendTeletext(fileContent.subarray(0, fileContent.length - 0));
+    await sendTeletext(y27);
   }
   childProcess.stdin.end();
 }
@@ -112,4 +136,11 @@ main();
 
 function generateBinaryPacket() {
   return Buffer.alloc(42); // Create a new buffer of specified length
+}
+function setPacketAddress(buf, line, x, y, dc = undefined) {
+  const b1 = hamming84[x + (y&1 ? 8 : 0)];
+  const b2 = hamming84[y >> 1];
+  buf.writeUInt8(b1, 0 + line * 42);
+  buf.writeUInt8(b2, 1 + line * 42);
+  if (dc !== undefined) buf.writeUInt8(hamming84[dc], 2 + line * 42)
 }
