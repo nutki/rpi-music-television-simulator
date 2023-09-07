@@ -3,6 +3,22 @@ const { readFileSync } = require('fs');
 const { exit } = require('process');
 const { charMap, x26CharMap } = require('./unicode');
 
+function printBufferWithControlCharacters(buffer) {
+  for (let i = 0; i < buffer.length; i++) {
+    const byte = buffer[i]&0x7f;
+    if (i % 42 === 0) process.stdout.write('"')
+    if (i % 42 < 2) continue;
+    if (byte >= 32 && byte < 127) {
+      process.stdout.write(String.fromCharCode(byte));
+    } else {
+      process.stdout.write(`\\x${byte.toString(16).padStart(2, '0')}`);
+    }
+    if (i % 42 === 41) process.stdout.write('",\n')
+  }
+  process.stdout.write('\n');
+}
+
+
 const parity = [
   0x80,0x01,0x02,0x83,0x04,0x85,0x86,0x07,0x08,0x89,0x8A,0x0B,0x8C,0x0D,0x0E,0x8F,
   0x10,0x91,0x92,0x13,0x94,0x15,0x16,0x97,0x98,0x19,0x1A,0x9B,0x1C,0x9D,0x9E,0x1F,
@@ -53,6 +69,67 @@ const sendTeletext = async (buffer) => {
 // Create the child process
 const childProcess = spawn('../raspi-teletext/teletext', ['-']);
 const fileContent = readFileSync('P101-0005.t42');
+// printBufferWithControlCharacters(fileContent);
+// exit(0)
+const newPage = (options = {}) => {
+  const lines = [];
+  const magazine = (options.magazine || 1) & 7;
+  options.content?.forEach((str, i) => {
+    if (str) {
+      const buf = lines[i+1] = Buffer.alloc(42, 32);
+      setPacketAddress(buf, 0, magazine, i+1);
+      let pos = 2;
+      for (const ch of str) buf.writeUInt8(parity[ch.codePointAt(0)], pos++);
+    }
+  });
+  return {
+    magazine,
+    subtitle: false,
+    lines,
+    extraChars: [],
+    links: [],
+    clean: false,
+    buffer: undefined,
+  }
+}
+const getPageBuffer = (page) => {
+  if (!page.clean) {
+    page.buffer = Buffer.concat(page.lines.filter((b, i) => b && i));
+    page.clean = true;
+  }
+  return page.buffer;
+};
+const getPageLine = (page, y) => {
+  if (!page.lines[y]) {
+    const buf = page.lines[y] = Buffer.alloc(42, parity[32]);
+    setPacketAddress(buf, 0, page.magazine, y);
+  }
+  return page.lines[y];
+}
+const linePrintRawAt = (line, str, x) => {
+  let pos = x + 2;
+  for (const ch of str) line.writeUInt8(parity[ch.codePointAt(0)], pos++);
+}
+
+const pagePrintAt = (page, str, x, y) => {
+  let pos = x + 2, extraPos = y * 40 + x;
+  const line = getPageLine(page, y);
+  for (const ch of str) {
+    line.writeUInt8(parity[ch in charMap ? charMap[ch] : ch.codePointAt(0) < 128 ? ch.codePointAt(0) : 32], pos++);
+    page.extraChars[extraPos++] = x26CharMap[ch];
+  }
+  page.clean = false;
+}
+const pagePrintRawAt = (page, str, x, y) => {
+  let pos = x + 2, extraPos = y * 40 + x;
+  const line = getPageLine(page, y);
+  for (const ch of str) {
+    line.writeUInt8(parity[ch.codePointAt(0)], pos++);
+    page.extraChars[extraPos++] = undefined;
+  }
+  page.clean = false;
+}
+
 
 const printAt = (str, x, y) => {
   let pos = y * 42 + x + 2;
@@ -123,6 +200,47 @@ const addTime = () => {
   const formattedDate = `${days[date.getDay()]} ${date.getDate()} ${months[date.getMonth()]}`.padStart(10);
   printAt(formattedDate, 21, 0);
 }
+const headerAddTime = (buf) => {
+  const date = new Date();
+  const h = date.getHours();
+  const m = date.getMinutes();
+  const s = date.getSeconds();
+  const time = RED + `${h/10|0}${h%10}:${m/10|0}${m%10}:${s/10|0}${s%10}`;
+  linePrintRawAt(buf, time, 31);
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const formattedDate = `${days[date.getDay()]} ${date.getDate()} ${months[date.getMonth()]}`.padStart(10);
+  linePrintRawAt(buf, formattedDate, 21);
+}
+
+const content = [];
+const p100 = newPage({ content: [
+"\x01\x1d\x07 MTV UK VIEWERS PLEASE SEE PAGE 170  ",
+"\x03MUSIC TELEVISION(R)  \x06M.JACKSON    \x03256",
+"\x137######;o\x7f?######;\x7f  \x06NO DOUBT     \x03257",
+"\x135      \"m&       ?*  \x06U2           \x03259",
+"\x135          \x14tx?   ~=\x17  x          x    ",
+"\x135         \x14x\x7f!0  ~'x\x1d\x17n\x7f$x<|0|4|4n\x7f$   ",
+"\x135      \x14x~'!\x7fju ~'x\x1d\x17 j\x7f \x7f=/%{=\x7f1j\x7f    ",
+"\x135      \x14+!  \x7f\"\x7fz7h\x7f\x1d\x17 \"/$+-/!/%/%\"/$   ",
+"\x135      }0 f\x14\x7f k\x7f\x13xh                    ",
+"\x135      \x7fj|\x7f\x14\x7f5\"%\x13\x7fj  \x07MTV Today    \x0310 ",
+"\x135      ?j\x7f\x7f\x14\"   \x13?j  \x07MTV Tomorrow \x0310 ",
+"\x13-,,,,,,,///,,,,,,,/  \x07Highlights   \x0311 ",
+"\x06Holland        \x03450                    ",
+"\x06United Kingdom \x03500  \x07MTV News     \x03140",
+"\x06Ireland        \x03520  \x07Competitions \x03150",
+"\x06Denmark        \x03550  \x07A-Z Index    \x03199",
+"\x06Germany        \x03600  \x07Latest Charts\x03210",
+"\x06Switzerland    \x03675   Tour Guide   \x03250",
+"\x06Sweden         \x03700                    ",
+"\x06Belgium        \x03750  \x07Advertising  \x03300",
+"\x06Norway         \x03800  \x07Study Europe \x03305",
+"",
+"",
+"\x01MTV Today\x02UK Today \x03Charts   \x06TourGuide",
+]});
+content[100] = p100;
 
 async function main() {
   fileContent.writeUInt8(hamming84[0], 2);
@@ -137,7 +255,7 @@ async function main() {
   // writeHamming18(y26, 3, 11 + ((15) << 6) + ((0x78) << 11));
   // writeHamming18(y26, 4, 12 + ((15) << 6) + ((0x24) << 11));
   // writeHamming18(y26, 5, 13 + ((15) << 6) + ((0x55) << 11));
-  const letter = 'z'.codePointAt(0);
+  const letter = 'e'.codePointAt(0);
   writeHamming18(y26, 1, 14 + ((16+1) << 6) + ((letter) << 11));
   writeHamming18(y26, 2, 15 + ((16+2) << 6) + ((letter) << 11));
   writeHamming18(y26, 3, 16 + ((16+3) << 6) + ((letter) << 11));
@@ -156,8 +274,8 @@ async function main() {
   writeHamming18(y26b, 2, 27 + ((16+14) << 6) + ((letter) << 11));
   writeHamming18(y26b, 3, 28 + ((16+15) << 6) + ((letter) << 11));
   writeHamming18(y26b, 4, 29 + (x26CharMap['ź'] << 6));
-  writeHamming18(y26b, 5, 30 + (x26CharMap['['] << 6));
-  writeHamming18(y26b, 6, 31 + (x26CharMap['{'] << 6));
+  writeHamming18(y26b, 5, 30 + (x26CharMap['ł'] << 6));
+  writeHamming18(y26b, 6, 31 + (x26CharMap['♪'] << 6));
   writeHamming18(y26b, 7, 32 + (x26CharMap['$'] << 6));
   writeHamming18(y26b, 8, 33 + (x26CharMap['#'] << 6));
   for (let i = 0; i < 6; i++) {
@@ -171,7 +289,31 @@ async function main() {
   y27.writeUInt8(hamming84[0xf], 39);
   y27.writeUInt8(hamming84[0x0], 40);
   y27.writeUInt8(hamming84[0x0], 41);
+  const header = Buffer.alloc(42, parity[32]);
+  header.writeUInt8(hamming84[0], 0);
+  header.writeUInt8(hamming84[0], 1);
   for (let i = 0;; i++) {
+    const page = p100;
+    header.writeUInt8(hamming84[page.magazine], 0);
+    header.writeUInt8(hamming84[i%10*0], 2);
+    header.writeUInt8(hamming84[Math.floor(i%30/10)*0], 3);
+    header.writeUInt8(hamming84[0], 4);
+    header.writeUInt8(hamming84[i%30==1?8*0:0], 5); //erase
+    header.writeUInt8(hamming84[0], 6);
+    header.writeUInt8(hamming84[i%30==1?8*0:0], 7); //subtitle
+    header.writeUInt8(hamming84[0], 8); //subtitle
+    header.writeUInt8(hamming84[0], 9); //subtitle
+    linePrintRawAt(header, YELLOW + "MTVText "+i%10, 11);
+    headerAddTime(header);
+    printAt(YELLOW + "MTVText"+i%10, 11, 0);
+    const buf = getPageBuffer(page);
+//    await sendTeletext(fileContent);
+    await sendTeletext(header);
+    await sendTeletext(getPageBuffer(page));
+    console.log(i, buf.length);
+  }
+  for (let i = 0;; i++) {
+    const page = p100;
     fileContent.writeUInt8(hamming84[i%30==1?8:0], 7); //subtitle
 //    fileContent.writeUInt8(hamming84[i%30==1?8:0], 5); //erase
     fileContent.writeUInt8(hamming84[i%10], 2);
@@ -193,7 +335,7 @@ async function main() {
 main();
 
 function generateBinaryPacket() {
-  return Buffer.alloc(42); // Create a new buffer of specified length
+  return Buffer.alloc(42, parity[32]); // Create a new buffer of specified length
 }
 function setPacketAddress(buf, line, x, y, dc = undefined) {
   const b1 = hamming84[x + (y&1 ? 8 : 0)];
