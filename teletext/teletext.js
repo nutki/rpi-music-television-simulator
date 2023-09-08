@@ -384,6 +384,9 @@ const rss = [" After the anonymous artist Ghostwriter",
 ]
 content[200] = newPage({magazine:2});
 rss.forEach((v, i) => pagePrintAt(content[200], v, 0, i+1));
+const srtContent = readFileSync('/mnt/music videos/Lipps Inc. - Funkytown (1980).srt');
+const subs = parseSrt(srtContent.toString());
+
 
 async function main() {
   const header = Buffer.alloc(42, parity[32]);
@@ -392,10 +395,21 @@ async function main() {
   header.writeUInt8(hamming84[0], 8); // C7-C10
   header.writeUInt8(hamming84[1], 9); // C11-C14
   linePrintRawAt(header, YELLOW + "MTVText", 11);
+  let lastSub;
   for (let i = 0;; i++) for (const [idx, page] of Object.entries(content)) {
     if (idx === "888") {
-      pageErase(page);
-      pagePrintAt(page, WHITE+NEW_BACKGROUND+BLACK+START_BOX+START_BOX+"[Hęłło@]"+i+END_BOX+END_BOX, 10, 22 + i%2);
+      const sub = getSubtitle(subs);
+      if (sub !== lastSub) {
+        lastSub = sub;
+        pageErase(page);
+        if (sub) {
+          let pos = 24 - sub.lines.length;
+          for (const line of sub.lines) {
+            const l = (START_BOX+START_BOX+line+END_BOX+END_BOX).substring(0, 40)
+            pagePrintAt(page, l, (40 - l.length)>>1, pos++);
+          }
+        }
+      }
     }
     const n = parseInt(idx, 16);
     if (((n>>8) & 7) !== page.magazine) console.log('magazine mismatch for page ', idx);
@@ -426,4 +440,30 @@ function setPacketAddress(buf, line, x, y, dc = undefined) {
   buf.writeUInt8(b1, 0 + line * 42);
   buf.writeUInt8(b2, 1 + line * 42);
   if (dc !== undefined) buf.writeUInt8(hamming84[dc], 2 + line * 42)
+}
+
+function getSubtitle(subs) {
+  if (!getSubtitle.startTime) getSubtitle.startTime = new Date();
+  const time = new Date() - getSubtitle.startTime;
+  return subs.find(({startTimeMs, endTimeMs}) => time >= startTimeMs && time <= endTimeMs);
+}
+function parseSrt(subtitleText) {
+  const subtitleBlocks = subtitleText.split('\n\n');
+  const subtitles = [];
+  for (const block of subtitleBlocks) {
+    const lines = block.trim().split('\n');
+    const id = parseInt(lines[0], 10);
+    if (lines.length < 3) continue;
+    const [startTimeMs, endTimeMs] = lines[1].split(' --> ').map(timeString => {
+      const [hh, mm, ss, ms] = timeString.split(/[^0-9]/).map(parseFloat);
+      return hh * 3600000 + mm * 60000 + ss * 1000 + ms;
+    });
+    subtitles.push({
+      id,
+      startTimeMs,
+      endTimeMs,
+      lines: lines.slice(2, 10),
+    });
+  }
+  return subtitles;
 }
