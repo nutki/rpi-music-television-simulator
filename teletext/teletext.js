@@ -61,9 +61,9 @@ function sleep(ms) {
     setTimeout(resolve, ms);
   });
 }
-const sendTeletext = async (buffer) => {
-  childProcess.stdin.write(buffer);
-  const lines = buffer.length/42;
+const sendTeletext = async (buffers) => {
+  for (const buffer of buffers) childProcess.stdin.write(buffer);
+  const lines = buffers.reduce((a, c) => a + c.length, 0)/42;
   const band = 32 * 25;
   const currentTime = new Date();
   const txTime = 1000/band * lines;
@@ -409,8 +409,7 @@ async function main() {
     header.writeUInt8(hamming84[page.subtitle?8:0], 7); // C6 - subtitle
     linePrintRawAt(header, `${i%10}`, 20);
     headerAddTime(header);
-    await sendTeletext(header);
-    await sendTeletext(getPageBuffer(page));
+    await sendTeletext([header, getPageBuffer(page)]);
     console.log(i, n.toString(16));
   }
   childProcess.stdin.end();

@@ -41,6 +41,7 @@
 #define VEC_CONFIG0_STD_MASK		GENMASK(1, 0)
 #define VEC_CONFIG0_NTSC_STD		0
 #define VEC_CONFIG0_PAL_BDGHI_STD	1
+#define VEC_CONFIG0_PAL_M_STD		2
 #define VEC_CONFIG0_PAL_N_STD		3
 
 
@@ -73,6 +74,9 @@
 #define PIXELVALVE2_VERTA_EVEN 0x1c
 #define PIXELVALVE2_VERTB_EVEN 0x20
 
+#define VEC_FREQ3_2			0x180
+#define VEC_FREQ1_0			0x184
+
 #define MAP_SIZE 4096UL
 #define MAP_MASK (MAP_SIZE - 1)
 #include <byteswap.h>
@@ -86,7 +90,10 @@ unsigned int get_reg_base() {
     printf("Detected register base address: 0x%08x\n", reg);
     return reg;
 }
-
+int freq_ntsc_hi = 0x000021f0;
+int freq_ntsc_lo = 0x00007c1f;
+int freq_pal_hi = 0x00002a09;
+int freq_pal_lo = 0x00008acb;
 int main(int argc, char **argv) {
     int fd;
     if((fd = open("/dev/mem", O_RDWR | O_SYNC)) == -1) {
@@ -99,6 +106,14 @@ int main(int argc, char **argv) {
     unsigned int *pixelvalve2_regs = mmap(0, MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, reg_base + 0x807000);
     int cbar = 0, burst = 0, chroma = 0, pos = -1;
     printf("Videocore chip revision: %x\n", vec_regs[VEC_REVID/4]);
+    unsigned int freq_lo = vec_regs[VEC_FREQ1_0/4];
+    unsigned int freq_hi = vec_regs[VEC_FREQ3_2/4];
+    double freq = (((freq_hi<<16) + (freq_lo & 0xffff)) * 27000000.0) / (1ll << 32);
+    // vec_regs[VEC_FREQ3_2/4] = freq_pal_hi;
+    // vec_regs[VEC_FREQ1_0/4] = freq_pal_lo;
+    // vec_regs[VEC_CONFIG0/4] |= VEC_CONFIG0_PAL_M_STD;
+    // vec_regs[VEC_CONFIG1/4] |= VEC_CONFIG1_CUSTOM_FREQ;
+
     unsigned int vert_b = pixelvalve2_regs[PIXELVALVE2_VERTB/4];
     unsigned int vert_a = pixelvalve2_regs[PIXELVALVE2_VERTA/4];
     unsigned int vert_b_even = pixelvalve2_regs[PIXELVALVE2_VERTB_EVEN/4];
@@ -106,6 +121,7 @@ int main(int argc, char **argv) {
     unsigned int offset = (vert_a >> 16) + (vert_a_even >> 16) + (vert_a & 0xffff) + (vert_a_even & 0xffff);
     unsigned int lines = (vert_b & 0xffff) + (vert_b_even & 0xffff);
     printf("Video lines: %d%c at offset %d\n",lines, (vert_b_even & 0xffff) ? 'i' : 'p', offset);
+    printf("Freq: %08x %08x %lf\n", freq_hi, freq_lo, freq);
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "+chroma")) chroma = +1;
         else if (!strcmp(argv[i], "-chroma")) chroma = -1;
