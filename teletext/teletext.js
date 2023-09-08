@@ -8,7 +8,9 @@ function printBufferWithControlCharacters(buffer) {
     const byte = buffer[i]&0x7f;
     if (i % 42 === 0) process.stdout.write('"')
     if (i % 42 < 2) continue;
-    if (byte >= 32 && byte < 127) {
+    if (byte == 34) {
+      process.stdout.write('\\"');
+    } else if (byte >= 32 && byte < 127) {
       process.stdout.write(String.fromCharCode(byte));
     } else {
       process.stdout.write(`\\x${byte.toString(16).padStart(2, '0')}`);
@@ -63,17 +65,25 @@ const sendTeletext = async (buffer) => {
   childProcess.stdin.write(buffer);
   const lines = buffer.length/42;
   const band = 32 * 25;
-  await sleep(1000/band * lines);
+  const currentTime = new Date();
+  const txTime = 1000/band * lines;
+  if (sendTeletext.lastTime !== undefined) {
+    const elapsedTimeMs = currentTime - sendTeletext.lastTime;
+    if (txTime > elapsedTimeMs) await sleep(txTime - elapsedTimeMs);
+  }
+  sendTeletext.lastTime = currentTime;
 }
 
 // Create the child process
 const childProcess = spawn('../raspi-teletext/teletext', ['-']);
-const fileContent = readFileSync('P101-0005.t42');
+// const fileContent = readFileSync('P101-0004(1).t42');
 // printBufferWithControlCharacters(fileContent);
 // exit(0)
 const newPage = (options = {}) => {
   const lines = [];
   const magazine = (options.magazine || 1) & 7;
+  const subtitle = options.subtitle || false;
+  const links = options.links || [];
   options.content?.forEach((str, i) => {
     if (str) {
       const buf = lines[i+1] = Buffer.alloc(42, 32);
@@ -84,17 +94,54 @@ const newPage = (options = {}) => {
   });
   return {
     magazine,
-    subtitle: false,
+    subtitle,
     lines,
     extraChars: [],
-    links: [],
+    links,
     clean: false,
     buffer: undefined,
   }
 }
 const getPageBuffer = (page) => {
   if (!page.clean) {
-    page.buffer = Buffer.concat(page.lines.filter((b, i) => b && i));
+    const content = page.lines.filter((b, i) => b && i);
+    let y26pos = 13, y26 = undefined, y26lasty, y26idx = 0;
+    page.extraChars.forEach((ch, i) => {
+      if (ch === undefined) return;
+      const x = i%40;
+      const y = i/40|0;
+      let updatey = y26lasty !== y;
+      if (y26pos > (updatey ? 11 : 12)) {
+        if (y26idx === 16) return;
+        y26 = generateBinaryPacket();
+        setPacketAddress(y26, 0, page.magazine, 26, y26idx++);
+        content.push(y26);
+        y26pos = 0;
+        updatey = true;
+      }
+      if (updatey) writeHamming18(y26, y26pos++, 40 + y + (4 << 6));
+      writeHamming18(y26, y26pos++, x + (ch << 6));
+      y26lasty = y;
+    });
+    if (page.links.length) {
+      const y27 = generateBinaryPacket();
+      setPacketAddress(y27, 0, page.magazine, 27, 0);
+      for (let i = 0; i < 6; i++) {
+        const addr = page.links[i] ? parseInt(page.links[i].toString(), 16) : 0xFF;
+        const magOffset = page.links[i] ? (page.magazine ^ (page.links[i]/100)) & 7 : 0;
+        y27.writeUInt8(hamming84[addr&0x0f], i*6 + 3);
+        y27.writeUInt8(hamming84[(addr&0xf0)>>4], i*6 + 4);
+        y27.writeUInt8(hamming84[0xf], i*6 + 5);
+        y27.writeUInt8(hamming84[0x7 | (magOffset & 1 ? 8 : 0)], i*6 + 6);
+        y27.writeUInt8(hamming84[0xf], i*6 + 7);
+        y27.writeUInt8(hamming84[0x3 | ((magOffset >> 1) << 2)], i*6 + 8);
+      }
+      y27.writeUInt8(hamming84[0xf], 39);
+      y27.writeUInt8(hamming84[0x0], 40);
+      y27.writeUInt8(hamming84[0x0], 41);    
+      content.push(y27);
+    }
+    page.buffer = Buffer.concat(content);
     page.clean = true;
   }
   return page.buffer;
@@ -106,9 +153,14 @@ const getPageLine = (page, y) => {
   }
   return page.lines[y];
 }
+const pageErase = (page) => {
+  page.lines = [];
+  page.extraChars = [];
+  page.clean = false;
+};
 const linePrintRawAt = (line, str, x) => {
   let pos = x + 2;
-  for (const ch of str) line.writeUInt8(parity[ch.codePointAt(0)], pos++);
+  for (const ch of str) line.writeUInt8(parity[ch in charMap ? charMap[ch] : ch.codePointAt(0)], pos++);
 }
 
 const pagePrintAt = (page, str, x, y) => {
@@ -130,15 +182,6 @@ const pagePrintRawAt = (page, str, x, y) => {
   page.clean = false;
 }
 
-
-const printAt = (str, x, y) => {
-  let pos = y * 42 + x + 2;
-  for (const ch of str) {
-    fileContent.writeUInt8(parity[ch in charMap ? charMap[ch] : ch.codePointAt(0)], pos++);
-  }
-}
-
-
 // Handle child process events
 childProcess.on('error', (error) => {
   console.error(`Child process error: ${error.message}`);
@@ -152,10 +195,6 @@ process.on('SIGTERM',function(){
   process.exit(1);
 });
 
-// process.on('disconnect', function() {
-//   console.log('parent exited')
-//   process.exit();
-// });
 const BLACK = "\0";
 const RED = "\x01";
 const GREEN = "\x02";
@@ -188,18 +227,6 @@ const BLACK_BACKGROUND = "\x1C";
 const NEW_BACKGROUND = "\x1D";
 const HOLD_MOSAICS = "\x1E";
 const RELEASE_MOSAICS = "\x1F";
-const addTime = () => {
-  const date = new Date();
-  const h = date.getHours();
-  const m = date.getMinutes();
-  const s = date.getSeconds();
-  const time = RED + `${h/10|0}${h%10}:${m/10|0}${m%10}:${s/10|0}${s%10}`;
-  printAt(time, 31, 0);
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const formattedDate = `${days[date.getDay()]} ${date.getDate()} ${months[date.getMonth()]}`.padStart(10);
-  printAt(formattedDate, 21, 0);
-}
 const headerAddTime = (buf) => {
   const date = new Date();
   const h = date.getHours();
@@ -224,9 +251,9 @@ const p100 = newPage({ content: [
 "\x135      \x14x~'!\x7fju ~'x\x1d\x17 j\x7f \x7f=/%{=\x7f1j\x7f    ",
 "\x135      \x14+!  \x7f\"\x7fz7h\x7f\x1d\x17 \"/$+-/!/%/%\"/$   ",
 "\x135      }0 f\x14\x7f k\x7f\x13xh                    ",
-"\x135      \x7fj|\x7f\x14\x7f5\"%\x13\x7fj  \x07MTV Today    \x0310 ",
-"\x135      ?j\x7f\x7f\x14\"   \x13?j  \x07MTV Tomorrow \x0310 ",
-"\x13-,,,,,,,///,,,,,,,/  \x07Highlights   \x0311 ",
+"\x135      \x7fj|\x7f\x14\x7f5\"%\x13\x7fj  \x07MTV Today    \x03102",
+"\x135      ?j\x7f\x7f\x14\"   \x13?j  \x07MTV Tomorrow \x03103",
+"\x13-,,,,,,,///,,,,,,,/  \x07Highlights   \x03110",
 "\x06Holland        \x03450                    ",
 "\x06United Kingdom \x03500  \x07MTV News     \x03140",
 "\x06Ireland        \x03520  \x07Competitions \x03150",
@@ -236,98 +263,155 @@ const p100 = newPage({ content: [
 "\x06Sweden         \x03700                    ",
 "\x06Belgium        \x03750  \x07Advertising  \x03300",
 "\x06Norway         \x03800  \x07Study Europe \x03305",
-"",
-"",
+" ",
+" ",
 "\x01MTV Today\x02UK Today \x03Charts   \x06TourGuide",
+], links: [100,102,105,888]});
+
+content[199] = newPage({
+  content:[
+    "\x13<,,,lp  `,,,,t     \x06European Magazine  ",
+    "\x135    +\x7f<!hx/ \x7f h?\x17\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f",
+    "\x135     \" xo5x 'x?\x17\x7f\x7f\x7f\x7f?!/\x7f//\x7f/\x7f?o'*o\x7f\x7f\x7f\x7f",
+    "\x135       aj5ot~'\x17\x7f\x7f\x7f\x7f\x7f} |5($jt\"`~4h~\x7f\x7f\x7f\x7f",
+    "\x135   jt `nj5\"?a \x17\x7f\x7f\x7f\x7f\x7f\x7f0#u\"#k!x0ku\"k\x7f\x7f\x7f\x7f",
+    "\x135   j\x7f)!j*!  \x7f \x17\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f",
+    "\x13-,,,.!  *,,,,'   \x03MUSIC TELEVISION (R) ",
+    "\x04\x1d\x06         Today's Headlines           ",
+    "\x03Music\x07Love anger at Cobain T-shirt \x03152",
+    "\x03Films\x07Caine under guard in Russia  \x03161",
+    "\x03World\x07UN promises new Rwanda probe \x03171",
+    "\x03Sport\x07Bagwell monster run continues\x03181",
+    "\x01\x1d\x03 HELP STING SAVE THE RAINFOREST\x08198  ",
+    "\x06Programmes   \x03110  \x06MTVtext Backup \x03191",
+    "\x06Competitions \x03130  \x06A-Z Index      \x03199",
+    "\x06MTV News     \x03140  \x06Magazine       \x03201",
+    "\x06Music Index  \x03150  \x06Charts Update  \x03210",
+    "\x06Movies/Videos\x03160  \x06Concert Guide  \x03251",
+    "\x06World  News  \x03170  \x06Advertising    \x03301",
+    "\x06Sports News  \x03180   NEW FONE FUN    401",
+    "    \x04\x1d\x07  FONE FUN IRELAND GO\x08402   \x1c    ",
+    "\x03\x1d\x1d\x01PLAY THE MTV EURO TOP 20 GAME 425   ",
+    "\x03\x1d\x07IN AUG. EACH 50th CALLER WJNS T-SHIRT",
+  ],
+});
+content[198] = newPage({content:[
+  "\x02\x15\x02\x15\x15\x15\x15\x15                                ",
+  "\x13  7###mp&###sk5`0\x03MUSIC TELEVISION(R)  ",
+  "\x14\x1d\x135    ! p}'1*h?! \x17  `4         `4     ",
+  "\x14\x1d\x135     /#\x7f*u`?   \x17 (\x7f=`|lth|h|(\x7f=     ",
+  "\x14\x1d\x135   }0x \x7f o~!   \x17  \x7f5j\x7f./b\x7fnw \x7f5     ",
+  "\x14\x1d\x135   \x7f\"j ? *%4   \x17  +-\"/.'*/*/ +-     ",
+  "\x13  -,,,' *,,,,.!                        ",
+]});
+content[197] = newPage({content:[
+  "\x11 k:26>7.245eijj4\x13og\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f",
+  "\x11 u5ee5ue5e5?zjjj0\x13~\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f?",
+  "\x115jjjj+w*ue=5%&::y\x13*\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f>t",
+  "\x11+v\x17x}\x1e\x11mjj\x17~\x7f}~\x11i\x1f\x13+\x7f\x7fk?\x7f?\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f",
+  "\x11u\x17z\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x1e\x116~ \x13\"/v/v/v/}+\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f",
+  "\x11j\x17\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x1e\x11jj \x17`~\x7f\x1e\x7f\x7f\x7f?\x1d\x13\"o\x7f\x7f\x7f\x7f\x7f\x7f\x7f",
+  "\x11`\x17\x7f\x7f\x7f?/\x7f\x7f\x7f\x1e\x7f\x7f/{?\x116 \x17z\x7f\x7f\x7f\x7f\x7f\x7f?\x1d  \x13o\x7f\x7f\x1c\x7f\x7f7",
+  "\x11*\x17\x7f\x7f\x7f?/|{\x7f\x1e\x7fyg;\x7f\x11j \x17\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x1d\x7f\x13j\x7f\x7f\x1c\x7f?!",
+  "\x17  \x7f\x7f\x7f:w6\x7f\x1e\x7fji{e?\x11& \x17\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f?\x1d\x7f\x13~\x7f\x1c\x7f\x7f\x7f ",
+  "\x17 vo\x7f\x7f\x7f|~\x7f\x7f\x7fj}|\x7f?}m  \x7f\x7f\x7f\x7f\x7f?\x7f\x7f?\x1d\x13h\x7f^\x1c\x7f\x7f\x7f ",
+  "\x17 *z\x7f\x7f\x7f\x7fg{\x7f\x7fxvo\x7f\x7f\x7f>  *\x7f\x7f\x7fg~\x7f?\x1d\x7f\x13j\x7f\x7f^\x1c\x7f? ",
+  "\x14u\x17*\x7f\x7f\x7f5w2\x7f\x7f725\x7f?5\x14\"\x17*~\x7f}.\x7f\x7f\x1e\x7f\x1d\x13j\x7f#o\x7f\x1c% ",
+  "\x14wv\x17o\x7f\x7f\x7f~\x7fj\x7fh\x7f\x7f\x7f\x7f5\x14b\x17`voi\x7f6\x7f?\x1d\x13?   j\x7f\x7f\x1c ",
+  "\x14\x7fy\x17*\x7f\x7f\x7f\x7f\x7f}|\x7f\x7f\x7f\x7f\x7f\x14(9\x17*>jj>y\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f?5  ",
+  "\x14\x7fm:\x17\x7f\x7f\x7f\x7f'<l,6o\x7f5\x14f?0\x17>z}~\x7f\x7f?\x7f\x7f\x7f\x1d\x7f\x13j\x7f\x1c\x14:",
+  "\x14\x7fw9\x17*\x7f\x7f)brqsr\"\x7f\x14d;<\x17<yw,vo\x7f\x7f\x7f\x7f\x7f\x7f\x1d\x7f\x13\x7f\x1c\x14z",
+  "\x14\x7f>l9\x17o\x7f\x7f\x7f}||\x7f\x7f% \x14.5\x17~?-,.e\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f?5\x148k",
+  "\x14\x7f{-(\x17\"\x7f\x7f?\x7f\x7f\x7fg?\x14(rfv0\x17`\x7f\x7f/sh4|+\x7f\x7f\x7f\x7f?5\x14fo",
+  "\x14\x7f\x7f;i!\x17k\x7f\x7f|||\x7f%\x14df8r8\x17 ($cpppp0j\x7f\x7f\x7f?5\x14f\x7f",
+  "\x14\x7fw{9!\x17 o\x7f\x7f\x7f\x7f\x7f\x14lnow}v1\x17h~\x7f\x7f\x7f\x7f\x7f\x7f~\x7f\x7f\x7f?5\x149{",
+  "\x14\x7f=={9(\x17j\x7f\x7f\x7f\x7f\x7f\x14'faoyw|\x17 k\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f?5\x14$9",
+  "\x14\x7fo{$99\x17 \x7f\x7f\x1e\x7f\x16` \x14m:smg} \x17##    +\x7f\x7f/\x16x\x7f|p",
+  "\x14\x7fo{9(\x16x\x17\x7f\x1e\x7f/\x16\x7f\x1ft\x14fx}}yv,p\x16 h\x7f\x7f}||~\x1d\x042/3",
+]});
+content[196] = newPage({content:[
+  "\x03MUSIC TELEVISION(R)  \x06WIN A HOLIDAY TO ",
+  "\x137######;o\x7f?######;\x7f  \x06ANTIGUA WITH MTV ",
+  "\x135      \"m&       ?*  \x06WORLD TOUR   \x03188",
+  "\x135          \x14tx?  `~=  \x17x          x    ",
+  "\x135        \x14`x\x7f!0 `~'x\x1d\x17n\x7f$x<|0|4|4n\x7f$   ",
+  "\x135      \x14x~'!\x7fju ~'x\x1d \x17j\x7f \x7f=/%{=\x7f1j\x7f    ",
+  "\x135      \x14+!  \x7f\"\x7fz7h\x1d  \x17\"/$+-/!/%/%\"/$   ",
+  "\x135      }0`f\x14\x7f k\x7f\x13xh                    ",
+  "\x135      \x7fj|\x7f\x14\x7f5\"%\x13\x7fj\x07  MTV Today    \x03102",
+  "\x135      ?j\x7f\x7f\x14\"   \x13?j\x07  MTV Tomorrow \x03103",
+  "\x13-,,,,,,,///,,,,,,,/\x07  Highlights   \x03110",
+  "\x06Holland        \x03450                    ",
+  "\x06United Kingdom \x03500  \x07MTV News     \x03140",
+  "\x06Ireland        \x03520  \x03Competitions \x03150",
+  "\x06Denmark        \x03550  \x07A-Z Index    \x03199",
+  "\x06Germany        \x03600  \x07Latest Charts\x03210",
+  "\x06Switzerland    \x03675  \x07Tour Guide   \x03250",
+  "\x06Sweden         \x03700                    ",
+  "\x06Belgium        \x03750  \x07Advertising  \x03300",
+  "\x06Norway         \x03800  \x07Study Europe \x03305",
+  "                                        ",
+  "\x07\x1d\x04 BEAVIS & BUTT-HEAD DO AMERICA 358   ",
+  "\x07\x1d\x01 +LOOKALIKE COMPETITION & TOUR BUS   ",
 ]});
 content[100] = p100;
+content[888] = newPage({subtitle:true, magazine:8});
+pagePrintAt(content[888], START_BOX+START_BOX+"[Hęłło@]"+END_BOX+END_BOX, 14, 23);
+
+const rss = [" After the anonymous artist Ghostwriter",
+"went viral with their A.I.-generated",
+"track “Heart on My Sleeve” — which",
+"mimics Drake and The Weeknd — earlier",
+"this year, representatives for the",
+"unknown act recently disclosed in an",
+"interview with The New York Times that",
+"they submitted the controversial song",
+"for next year’s Grammy awards.",
+" Submitted for best rap song and song of",
+"the year, “Heart on My Sleeve” was",
+"eligible despite the use of A.I.",
+"technology on the record, Harvey Mason,",
+"jr., CEO of the Recording Academy,",
+"told The New York Times. “As far as the",
+"creative side, it’s absolutely eligible",
+"because it was written by a human,” he",
+"noted.",
+" Billboard has reached out to Drake and",
+"The Weeknd for comment.",
+" Last April, “Heart on My Sleeve” was",
+"pulled from streaming services after",
+"generating more than 600,000 plays on",
+]
+content[200] = newPage({magazine:2});
+rss.forEach((v, i) => pagePrintAt(content[200], v, 0, i+1));
 
 async function main() {
-  fileContent.writeUInt8(hamming84[0], 2);
-  const y27 = generateBinaryPacket();
-  const y26 = generateBinaryPacket();
-  const y26b = generateBinaryPacket();
-  setPacketAddress(y27, 0, 1, 27, 0);
-  setPacketAddress(y26, 0, 1, 26, 0);
-  writeHamming18(y26, 0, 40 + 22 + ((1) << 6) + ((4) << 11));
-//  writeHamming18(y26, 1, 42 + ((0) << 6) + ((3) << 11));
-  // writeHamming18(y26, 2, 10 + ((15) << 6) + ((0x2C) << 11));
-  // writeHamming18(y26, 3, 11 + ((15) << 6) + ((0x78) << 11));
-  // writeHamming18(y26, 4, 12 + ((15) << 6) + ((0x24) << 11));
-  // writeHamming18(y26, 5, 13 + ((15) << 6) + ((0x55) << 11));
-  const letter = 'e'.codePointAt(0);
-  writeHamming18(y26, 1, 14 + ((16+1) << 6) + ((letter) << 11));
-  writeHamming18(y26, 2, 15 + ((16+2) << 6) + ((letter) << 11));
-  writeHamming18(y26, 3, 16 + ((16+3) << 6) + ((letter) << 11));
-  writeHamming18(y26, 4, 17 + ((16+4) << 6) + ((letter) << 11));
-  writeHamming18(y26, 5, 18 + ((16+5) << 6) + ((letter) << 11));
-  writeHamming18(y26, 6, 19 + ((16+6) << 6) + ((letter) << 11));
-  writeHamming18(y26, 7, 20 + ((16+7) << 6) + ((letter) << 11));
-  writeHamming18(y26, 8, 21 + ((16+8) << 6) + ((letter) << 11));
-  writeHamming18(y26, 9, 22 + ((16+9) << 6) + ((letter) << 11));
-  writeHamming18(y26, 10, 23 + ((16+10) << 6) + ((letter) << 11));
-  writeHamming18(y26, 11, 24 + ((16+11) << 6) + ((letter) << 11));
-  writeHamming18(y26, 12, 25 + ((16+12) << 6) + ((letter) << 11));
-  setPacketAddress(y26b, 0, 1, 26, 1);
-  writeHamming18(y26b, 0, 40 + 22 + ((1) << 6) + ((4) << 11));
-  writeHamming18(y26b, 1, 26 + ((16+13) << 6) + ((letter) << 11));
-  writeHamming18(y26b, 2, 27 + ((16+14) << 6) + ((letter) << 11));
-  writeHamming18(y26b, 3, 28 + ((16+15) << 6) + ((letter) << 11));
-  writeHamming18(y26b, 4, 29 + (x26CharMap['ź'] << 6));
-  writeHamming18(y26b, 5, 30 + (x26CharMap['ł'] << 6));
-  writeHamming18(y26b, 6, 31 + (x26CharMap['♪'] << 6));
-  writeHamming18(y26b, 7, 32 + (x26CharMap['$'] << 6));
-  writeHamming18(y26b, 8, 33 + (x26CharMap['#'] << 6));
-  for (let i = 0; i < 6; i++) {
-    y27.writeUInt8(hamming84[i*2], i*6 + 3);
-    y27.writeUInt8(hamming84[1], i*6 + 4);
-    y27.writeUInt8(hamming84[0xf], i*6 + 5);
-    y27.writeUInt8(hamming84[0x7], i*6 + 6);
-    y27.writeUInt8(hamming84[0xf], i*6 + 7);
-    y27.writeUInt8(hamming84[0x3], i*6 + 8);
-  }
-  y27.writeUInt8(hamming84[0xf], 39);
-  y27.writeUInt8(hamming84[0x0], 40);
-  y27.writeUInt8(hamming84[0x0], 41);
   const header = Buffer.alloc(42, parity[32]);
   header.writeUInt8(hamming84[0], 0);
   header.writeUInt8(hamming84[0], 1);
-  for (let i = 0;; i++) {
-    const page = p100;
+  header.writeUInt8(hamming84[0], 8); // C7-C10
+  header.writeUInt8(hamming84[1], 9); // C11-C14
+  linePrintRawAt(header, YELLOW + "MTVText", 11);
+  for (let i = 0;; i++) for (const [idx, page] of Object.entries(content)) {
+    if (idx === "888") {
+      pageErase(page);
+      pagePrintAt(page, WHITE+NEW_BACKGROUND+BLACK+START_BOX+START_BOX+"[Hęłło@]"+i+END_BOX+END_BOX, 10, 22 + i%2);
+    }
+    const n = parseInt(idx, 16);
+    if (((n>>8) & 7) !== page.magazine) console.log('magazine mismatch for page ', idx);
     header.writeUInt8(hamming84[page.magazine], 0);
-    header.writeUInt8(hamming84[i%10*0], 2);
-    header.writeUInt8(hamming84[Math.floor(i%30/10)*0], 3);
+    header.writeUInt8(hamming84[n&0x0f], 2);
+    header.writeUInt8(hamming84[(n&0xf0)>>4], 3);
+    // Subpage + C4-C6
     header.writeUInt8(hamming84[0], 4);
-    header.writeUInt8(hamming84[i%30==1?8*0:0], 5); //erase
+    header.writeUInt8(hamming84[page.clean?0:8], 5); // C4 - erase
     header.writeUInt8(hamming84[0], 6);
-    header.writeUInt8(hamming84[i%30==1?8*0:0], 7); //subtitle
-    header.writeUInt8(hamming84[0], 8); //subtitle
-    header.writeUInt8(hamming84[0], 9); //subtitle
-    linePrintRawAt(header, YELLOW + "MTVText "+i%10, 11);
+    header.writeUInt8(hamming84[page.subtitle?8:0], 7); // C6 - subtitle
+    linePrintRawAt(header, `${i%10}`, 20);
     headerAddTime(header);
-    printAt(YELLOW + "MTVText"+i%10, 11, 0);
-    const buf = getPageBuffer(page);
-//    await sendTeletext(fileContent);
     await sendTeletext(header);
     await sendTeletext(getPageBuffer(page));
-    console.log(i, buf.length);
-  }
-  for (let i = 0;; i++) {
-    const page = p100;
-    fileContent.writeUInt8(hamming84[i%30==1?8:0], 7); //subtitle
-//    fileContent.writeUInt8(hamming84[i%30==1?8:0], 5); //erase
-    fileContent.writeUInt8(hamming84[i%10], 2);
-    fileContent.writeUInt8(hamming84[Math.floor(i%30/10)], 3);
-    printAt(YELLOW + "MTVText"+i%10, 11, 0);
-    printAt(START_BOX+START_BOX+"Hello!"+END_BOX+END_BOX, 15, 23);
-    addTime();
-//    console.log(fileContent.readUInt8(420), fileContent.readUInt8(421));
-//    console.log(fileContent.readUInt8(420), fileContent.readUInt8(421));
-    await sendTeletext(fileContent.subarray(0, fileContent.length - 0));
-    await sendTeletext(y26);
-    await sendTeletext(y26b);
-    await sendTeletext(y27);
-    console.log(i);
+    console.log(i, n.toString(16));
   }
   childProcess.stdin.end();
 }

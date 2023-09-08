@@ -55,6 +55,7 @@ const discriticsStripMap = [
   ["'", '‘’`'],
   ['(', '[{'],
   [')', ']}'],
+  ['-', '—─']
 ];
 const chr = (x) => x.codePointAt(0);
 const g0dia = (x, d) => (0x10 + d) + (x << 5);
@@ -122,6 +123,7 @@ const x26CharMap = {
   '¿': g2(0x3F),
 
   '─': g2(0x50), // Also in latin english G0
+  '—': g2(0x50), // Also in latin english G0
   '¹': g2(0x51),
   '®': g2(0x52),
   '©': g2(0x53),
