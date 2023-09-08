@@ -71,7 +71,7 @@ const sendTeletext = async (buffers) => {
     const elapsedTimeMs = currentTime - sendTeletext.lastTime;
     if (txTime > elapsedTimeMs) await sleep(txTime - elapsedTimeMs);
   }
-  sendTeletext.lastTime = currentTime;
+  sendTeletext.lastTime = new Date();
 }
 
 // Create the child process
