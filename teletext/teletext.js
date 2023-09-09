@@ -162,22 +162,31 @@ const pageErase = (page) => {
 };
 const linePrintRawAt = (line, str, x) => {
   let pos = x + 2;
-  for (const ch of str) line.writeUInt8(parity[ch in charMap ? charMap[ch] : ch.codePointAt(0)], pos++);
+  for (const ch of str) if (pos < 42) line.writeUInt8(parity[ch in charMap ? charMap[ch] : ch.codePointAt(0)], pos++);
 }
 
 const pagePrintAt = (page, str, x, y) => {
   let pos = x + 2, extraPos = y * 40 + x;
   const line = getPageLine(page, y);
-  for (const ch of str) {
+  for (const ch of str) if (pos < 42) {
     line.writeUInt8(parity[ch in charMap ? charMap[ch] : ch.codePointAt(0) < 128 ? ch.codePointAt(0) : 32], pos++);
     page.extraChars[extraPos++] = x26CharMap[ch];
   }
   page.clean = false;
 }
+const pagePrintAtRight = (page, str, x, y, len) => {
+  pagePrintAt(page, str.padStart(len), x, y)
+}
+const pagePrintAtLeft = (page, str, x, y, len) => {
+  pagePrintAt(page, str.padEnd(len), x, y)
+}
+const pagePrintAtCenter = (page, str, x, y, len) => {
+  pagePrintAt(page, str.padStart((len+str.length)>>1).padEnd(len), x, y)
+}
 const pagePrintRawAt = (page, str, x, y) => {
   let pos = x + 2, extraPos = y * 40 + x;
   const line = getPageLine(page, y);
-  for (const ch of str) {
+  for (const ch of str) if (pos < 42) {
     line.writeUInt8(parity[ch.codePointAt(0)], pos++);
     page.extraChars[extraPos++] = undefined;
   }
@@ -257,13 +266,13 @@ const p100 = newPage({ content: [
 "\x135      \x7fj|\x7f\x14\x7f5\"%\x13\x7fj",
 "\x135      ?j\x7f\x7f\x14\"   \x13?j",
 "\x13-,,,,,,,///,,,,,,,/",
+"\x06NME Music News \x03500  \x07Subtitles    \x03888",
+"\x06Billboard News \x03600  \x07Info overlay \x03101",
+"\x06               \x03     \x07Gallery      \x03195",
+"\x06               \x03     \x07MTV Top 20   \x03210",
 " ",
 " ",
-" ",
-" ",
-" ",
-" ",
-" ",
+" Now playing:",
 " ",
 " ",
 " ",
@@ -420,7 +429,7 @@ function formatDuration(d) {
   const s = (d+500)/1000|0;
   const m = s/60|0;
   const ss = s%60;
-  return m.toString().padStart(2) + ':' + ss.toString().padStart(2, '0');
+  return m.toString() + ':' + ss.toString().padStart(2, '0');
 }
 
 const doubleHeightSubs = true;
@@ -481,28 +490,29 @@ function processInput(buf) {
     } catch(e) { subs = undefined }
     try {
       const metaContent = JSON.parse(readFileSync(baseName + '.meta.json'));
-      pagePrintAt(content[101], YELLOW+START_BOX+START_BOX+metaContent.artist+END_BOX+END_BOX, 0, 1);
-      pagePrintAt(content[101], GREEN+START_BOX+START_BOX+metaContent.name+END_BOX+END_BOX, 0, 2);
-      let nexty = 3;
+      pagePrintAtCenter(content[101], YELLOW+START_BOX+START_BOX+metaContent.artist+END_BOX+END_BOX, 0, 1, 40);
+      pagePrintAtCenter(content[101], GREEN+START_BOX+START_BOX+metaContent.name+END_BOX+END_BOX, 0, 2, 40);
       if (metaContent.year)
-        pagePrintAt(content[101], WHITE+START_BOX+START_BOX+'Year: ' + metaContent.year+END_BOX+END_BOX, 0, nexty++);
-      if (metaContent.album)
-        pagePrintAt(content[101], WHITE+START_BOX+START_BOX+'Album: ' + metaContent.album+END_BOX+END_BOX, 0, nexty++);
+        pagePrintAtLeft(content[101], WHITE+START_BOX+START_BOX+metaContent.year+END_BOX+END_BOX, 0, 3, 4);
       if (metaContent.director)
-        pagePrintAt(content[101], WHITE+START_BOX+START_BOX+'Directed by: ' + metaContent.director+END_BOX+END_BOX, 0, nexty++);
-    } catch(e) {}
+        pagePrintAt(content[101], WHITE+START_BOX+START_BOX+'Directed by: ' + metaContent.director+END_BOX+END_BOX, 0, 4);
+      pagePrintAtLeft(content[100], GREEN+metaContent.name, 0, 19, 40);
+      pagePrintAtRight(content[100], YELLOW+metaContent.artist, 0, 20, 40);
+      pagePrintAtLeft(content[100], metaContent.year ? ' Year: '+metaContent.year: '', 0, 21, 11);
+      pagePrintAtLeft(content[100], metaContent.album ? ' Album: ' + metaContent.album : '', 0, 22, 40);
+      pagePrintAtLeft(content[100], metaContent.director ? ' Directed by: ' + metaContent.director : '', 0, 23, 40);
+    } catch(e) { console.log(e) }
     try {
       const confContent = readFileSync(baseName + '.conf', 'utf8').split('\n').filter(e => e).map((e) => [e[0], e.substring(2)]);
       cropPosStart = confContent.S ? parseInt(confContent.S) : 0;
       cropPosEnd = confContent.E ? parseInt(confContent.E) : -1;
-      console.log(confContent);
     } catch(e) {}
   } else if (buf[0] === 'P') {
     playerPos = parseInt(buf.substring(1));
   } else if (buf[0] === 'D') {
     playerDuration = parseInt(buf.substring(1));
     const playerCroppedDuration = (cropPosEnd >= 0 ? cropPosEnd : playerDuration) - cropPosStart;
-    pagePrintAt(content[101], START_BOX+formatDuration(playerCroppedDuration), 40-6, 6);
+    pagePrintAtRight(content[101], START_BOX+formatDuration(playerCroppedDuration), 40-7, 3, 7);
   } else {
     console.log('Unknown player command: ', buf);
   }
