@@ -730,6 +730,7 @@ int main(int argc, char *argv[]) {
       case PLAYER_STARTING:
         duration = query("Duration");
         if (duration > 0) {
+          teletext_set_video_duration(duration/1000);
           video_width = query("ResWidth");
           video_height = query("ResHeight");
           check_subtitles(ce->path);

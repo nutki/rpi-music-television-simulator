@@ -55,7 +55,7 @@ const discriticsStripMap = [
   ["'", '‘’`'],
   ['(', '[{'],
   [')', ']}'],
-  ['-', '—─']
+  ['-', '—─–']
 ];
 const chr = (x) => x.codePointAt(0);
 const g0dia = (x, d) => (0x10 + d) + (x << 5);

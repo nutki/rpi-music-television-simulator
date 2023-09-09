@@ -40,3 +40,10 @@ void teletext_set_video_position(int pos) {
     fwrite(buf, strlen(buf), 1, f);
     fflush(f);
 }
+void teletext_set_video_duration(int d) {
+    if (!f) return;
+    char buf[20];
+    sprintf(buf, "D%d\n", d);
+    fwrite(buf, strlen(buf), 1, f);
+    fflush(f);
+}

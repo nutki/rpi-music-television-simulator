@@ -271,6 +271,7 @@ const p100 = newPage({ content: [
 " ",
 "\x01MTV Today\x02UK Today \x03Charts   \x06Subtitles",
 ], links: [100,102,105,888]});
+content[101] = newPage({ subtitle: true });
 
 content[195] = newPage({ content: [
   "\x01\x1d\x07 MTV UK VIEWERS PLEASE SEE PAGE 170  ",
@@ -414,7 +415,13 @@ const rss = [" After the anonymous artist Ghostwriter",
 content[200] = newPage({magazine:2});
 rss.forEach((v, i) => pagePrintAt(content[200], v, 0, i+1));
 let subs;
-let playerPos = 0;
+let playerPos = 0, playerDuration = 0, cropPosStart = 0, cropPosEnd = -1;
+function formatDuration(d) {
+  const s = (d+500)/1000|0;
+  const m = s/60|0;
+  const ss = s%60;
+  return m.toString().padStart(2) + ':' + ss.toString().padStart(2, '0');
+}
 
 const doubleHeightSubs = true;
 async function main() {
@@ -456,7 +463,7 @@ async function main() {
     linePrintRawAt(header, `${i%10}`, 20);
     headerAddTime(header);
     await sendTeletext([header, getPageBuffer(page)]);
-    console.log(i, n.toString(16));
+//    console.log(i, n.toString(16));
   }
   childProcess.stdin.end();
 }
@@ -464,13 +471,38 @@ function processInput(buf) {
   pagePrintAt(content[200], buf.substring(0,40), 0, 1);
   if (buf[0] === 'F') {
     const playerFile = buf.substring(1);
+    playerDuration = playerPos = cropPosStart = 0;
+    cropPosEnd = -1;
+    pageErase(content[101]);
     const baseName = playerFile.replace(/\.\w+$/,"");
     try {
     const srtContent = readFileSync(baseName + '.srt');
     subs = srtContent ? parseSrt(srtContent.toString()) : undefined;
     } catch(e) { subs = undefined }
+    try {
+      const metaContent = JSON.parse(readFileSync(baseName + '.meta.json'));
+      pagePrintAt(content[101], YELLOW+START_BOX+START_BOX+metaContent.artist+END_BOX+END_BOX, 0, 1);
+      pagePrintAt(content[101], GREEN+START_BOX+START_BOX+metaContent.name+END_BOX+END_BOX, 0, 2);
+      let nexty = 3;
+      if (metaContent.year)
+        pagePrintAt(content[101], WHITE+START_BOX+START_BOX+'Year: ' + metaContent.year+END_BOX+END_BOX, 0, nexty++);
+      if (metaContent.album)
+        pagePrintAt(content[101], WHITE+START_BOX+START_BOX+'Album: ' + metaContent.album+END_BOX+END_BOX, 0, nexty++);
+      if (metaContent.director)
+        pagePrintAt(content[101], WHITE+START_BOX+START_BOX+'Directed by: ' + metaContent.director+END_BOX+END_BOX, 0, nexty++);
+    } catch(e) {}
+    try {
+      const confContent = readFileSync(baseName + '.conf', 'utf8').split('\n').filter(e => e).map((e) => [e[0], e.substring(2)]);
+      cropPosStart = confContent.S ? parseInt(confContent.S) : 0;
+      cropPosEnd = confContent.E ? parseInt(confContent.E) : -1;
+      console.log(confContent);
+    } catch(e) {}
   } else if (buf[0] === 'P') {
     playerPos = parseInt(buf.substring(1));
+  } else if (buf[0] === 'D') {
+    playerDuration = parseInt(buf.substring(1));
+    const playerCroppedDuration = (cropPosEnd >= 0 ? cropPosEnd : playerDuration) - cropPosStart;
+    pagePrintAt(content[101], START_BOX+formatDuration(playerCroppedDuration), 40-6, 6);
   } else {
     console.log('Unknown player command: ', buf);
   }
