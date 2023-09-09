@@ -388,9 +388,8 @@ const rss = [" After the anonymous artist Ghostwriter",
 ]
 content[200] = newPage({magazine:2});
 rss.forEach((v, i) => pagePrintAt(content[200], v, 0, i+1));
-const srtContent = readFileSync('/mnt/music videos/Lipps Inc. - Funkytown (1980).srt');
-const subs = parseSrt(srtContent.toString());
-
+let subs;
+let playerPos = 0;
 
 async function main() {
   const header = Buffer.alloc(42, parity[32]);
@@ -402,15 +401,15 @@ async function main() {
   let lastSub;
   for (let i = 0;; i++) for (const [idx, page] of Object.entries(content)) {
     if (idx === "888") {
-      const sub = getSubtitle(subs);
+      const sub = subs && getSubtitle(subs);
       if (sub !== lastSub) {
         lastSub = sub;
         pageErase(page);
         if (sub) {
-          let pos = 24 - sub.lines.length;
+          let pos = 20 - sub.lines.length*2;
           for (const line of sub.lines) {
-            const l = (START_BOX+START_BOX+line+END_BOX+END_BOX).substring(0, 40)
-            pagePrintAt(page, l, (40 - l.length)>>1, pos++);
+            const l = (DOUBLE_HEIGHT+START_BOX+START_BOX+line+END_BOX+END_BOX+' ').substring(0, 40)
+            pagePrintAt(page, l, (40 - l.length)>>1, pos++); pos++;
           }
         }
       }
@@ -434,6 +433,18 @@ async function main() {
 }
 function processInput(buf) {
   pagePrintAt(content[200], buf.substring(0,40), 0, 1);
+  if (buf[0] === 'F') {
+    const playerFile = buf.substring(1);
+    const baseName = playerFile.replace(/\.\w+$/,"");
+    try {
+    const srtContent = readFileSync(baseName + '.srt');
+    subs = srtContent ? parseSrt(srtContent.toString()) : undefined;
+    } catch(e) { subs = undefined }
+  } else if (buf[0] === 'P') {
+    playerPos = parseInt(buf.substring(1));
+  } else {
+    console.log('Unknown player command: ', buf);
+  }
 }
 main();
 
@@ -449,8 +460,7 @@ function setPacketAddress(buf, line, x, y, dc = undefined) {
 }
 
 function getSubtitle(subs) {
-  if (!getSubtitle.startTime) getSubtitle.startTime = new Date();
-  const time = new Date() - getSubtitle.startTime;
+  const time = playerPos;
   return subs.find(({startTimeMs, endTimeMs}) => time >= startTimeMs && time <= endTimeMs);
 }
 function parseSrt(subtitleText) {
@@ -468,7 +478,7 @@ function parseSrt(subtitleText) {
       id,
       startTimeMs,
       endTimeMs,
-      lines: lines.slice(2, 10),
+      lines: lines.slice(2, 10).map(x => x.trim()),
     });
   }
   return subtitles;
