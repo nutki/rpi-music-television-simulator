@@ -246,33 +246,59 @@ const headerAddTime = (buf) => {
 
 const content = [];
 const p100 = newPage({ content: [
-"\x01\x1d\x07 MTV UK VIEWERS PLEASE SEE PAGE 170  ",
-"\x03MUSIC TELEVISION(R)  \x06M.JACKSON    \x03256",
-"\x137######;o\x7f?######;\x7f  \x06NO DOUBT     \x03257",
-"\x135      \"m&       ?*  \x06U2           \x03259",
+"\x03MUSIC TELEVISION(R)",
+"\x137######;o\x7f?######;\x7f",
+"\x135      \"m&       ?*",
 "\x135          \x14tx?   ~=\x17  x          x    ",
 "\x135         \x14x\x7f!0  ~'x\x1d\x17n\x7f$x<|0|4|4n\x7f$   ",
 "\x135      \x14x~'!\x7fju ~'x\x1d\x17 j\x7f \x7f=/%{=\x7f1j\x7f    ",
 "\x135      \x14+!  \x7f\"\x7fz7h\x7f\x1d\x17 \"/$+-/!/%/%\"/$   ",
 "\x135      }0 f\x14\x7f k\x7f\x13xh                    ",
-"\x135      \x7fj|\x7f\x14\x7f5\"%\x13\x7fj  \x07MTV Today    \x03102",
-"\x135      ?j\x7f\x7f\x14\"   \x13?j  \x07MTV Tomorrow \x03103",
-"\x13-,,,,,,,///,,,,,,,/  \x07Highlights   \x03110",
-"\x06Holland        \x03450                    ",
-"\x06United Kingdom \x03500  \x07MTV News     \x03140",
-"\x06Ireland        \x03520  \x07Competitions \x03150",
-"\x06Denmark        \x03550  \x07A-Z Index    \x03199",
-"\x06Germany        \x03600  \x07Latest Charts\x03210",
-"\x06Switzerland    \x03675   Tour Guide   \x03250",
-"\x06Sweden         \x03700                    ",
-"\x06Belgium        \x03750  \x07Advertising  \x03300",
-"\x06Norway         \x03800  \x07Study Europe \x03305",
+"\x135      \x7fj|\x7f\x14\x7f5\"%\x13\x7fj",
+"\x135      ?j\x7f\x7f\x14\"   \x13?j",
+"\x13-,,,,,,,///,,,,,,,/",
 " ",
 " ",
-"\x01MTV Today\x02UK Today \x03Charts   \x06TourGuide",
+" ",
+" ",
+" ",
+" ",
+" ",
+" ",
+" ",
+" ",
+" ",
+" ",
+"\x01MTV Today\x02UK Today \x03Charts   \x06Subtitles",
 ], links: [100,102,105,888]});
 
-content[199] = newPage({
+content[195] = newPage({ content: [
+  "\x01\x1d\x07 MTV UK VIEWERS PLEASE SEE PAGE 170  ",
+  "\x03MUSIC TELEVISION(R)  \x06M.JACKSON    \x03256",
+  "\x137######;o\x7f?######;\x7f  \x06NO DOUBT     \x03257",
+  "\x135      \"m&       ?*  \x06U2           \x03259",
+  "\x135          \x14tx?   ~=\x17  x          x    ",
+  "\x135         \x14x\x7f!0  ~'x\x1d\x17n\x7f$x<|0|4|4n\x7f$   ",
+  "\x135      \x14x~'!\x7fju ~'x\x1d\x17 j\x7f \x7f=/%{=\x7f1j\x7f    ",
+  "\x135      \x14+!  \x7f\"\x7fz7h\x7f\x1d\x17 \"/$+-/!/%/%\"/$   ",
+  "\x135      }0 f\x14\x7f k\x7f\x13xh                    ",
+  "\x135      \x7fj|\x7f\x14\x7f5\"%\x13\x7fj  \x07MTV Today    \x03102",
+  "\x135      ?j\x7f\x7f\x14\"   \x13?j  \x07MTV Tomorrow \x03103",
+  "\x13-,,,,,,,///,,,,,,,/  \x07Highlights   \x03110",
+  "\x06Holland        \x03450                    ",
+  "\x06United Kingdom \x03500  \x07MTV News     \x03140",
+  "\x06Ireland        \x03520  \x07Competitions \x03150",
+  "\x06Denmark        \x03550  \x07A-Z Index    \x03199",
+  "\x06Germany        \x03600  \x07Latest Charts\x03210",
+  "\x06Switzerland    \x03675   Tour Guide   \x03250",
+  "\x06Sweden         \x03700                    ",
+  "\x06Belgium        \x03750  \x07Advertising  \x03300",
+  "\x06Norway         \x03800  \x07Study Europe \x03305",
+  " ",
+  " ",
+  ]});
+
+  content[199] = newPage({
   content:[
     "\x13<,,,lp  `,,,,t     \x06European Magazine  ",
     "\x135    +\x7f<!hx/ \x7f h?\x17\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f",
@@ -360,7 +386,6 @@ content[196] = newPage({content:[
 ]});
 content[100] = p100;
 content[888] = newPage({subtitle:true, magazine:8});
-pagePrintAt(content[888], START_BOX+START_BOX+"[Hęłło@]"+END_BOX+END_BOX, 14, 23);
 
 const rss = [" After the anonymous artist Ghostwriter",
 "went viral with their A.I.-generated",
@@ -391,6 +416,7 @@ rss.forEach((v, i) => pagePrintAt(content[200], v, 0, i+1));
 let subs;
 let playerPos = 0;
 
+const doubleHeightSubs = true;
 async function main() {
   const header = Buffer.alloc(42, parity[32]);
   header.writeUInt8(hamming84[0], 0);
@@ -406,10 +432,13 @@ async function main() {
         lastSub = sub;
         pageErase(page);
         if (sub) {
-          let pos = 20 - sub.lines.length*2;
+          let pos = 24 - sub.lines.length*(doubleHeightSubs ? 2 : 1);
+          const prefix = doubleHeightSubs ? DOUBLE_HEIGHT+START_BOX+START_BOX : START_BOX+START_BOX;
+          const suffix = doubleHeightSubs ? END_BOX+END_BOX+' ' : END_BOX+END_BOX;
           for (const line of sub.lines) {
-            const l = (DOUBLE_HEIGHT+START_BOX+START_BOX+line+END_BOX+END_BOX+' ').substring(0, 40)
-            pagePrintAt(page, l, (40 - l.length)>>1, pos++); pos++;
+            const l = (prefix+line+suffix).substring(0, 40)
+            pagePrintAt(page, l, (40 - l.length)>>1, pos);
+            pos += doubleHeightSubs ? 2 : 1;
           }
         }
       }
