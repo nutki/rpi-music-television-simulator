@@ -1,6 +1,7 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 int init = 0;
 FILE *f;
 static void set_screen_offset(int offset) {
@@ -24,4 +25,18 @@ void teletext_close() {
     if (!init) return;
 //    if (f) fclose(f);
     set_screen_offset(0);
+}
+void teletext_set_video_filename(char *fname) {
+    if (!f) return;
+    fputc('F', f);
+    fwrite(fname, strlen(fname), 1, f);
+    fputc('\n', f);
+    fflush(f);
+}
+void teletext_set_video_position(int pos) {
+    if (!f) return;
+    char buf[20];
+    sprintf(buf, "P%d\n", pos);
+    fwrite(buf, strlen(buf), 1, f);
+    fflush(f);
 }

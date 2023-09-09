@@ -11,6 +11,7 @@
 #include "dispmanx.h"
 #include "terminput.h"
 #include "comm.h"
+#include "teletext.h"
 
 #define OMXPLAYER_PATH "omxplayer.bin"
 #define CHANNELS_PATH "channels"
@@ -722,6 +723,7 @@ int main(int argc, char *argv[]) {
         }
         changing_video = false;
         start_player(ce->path, current_position);
+        teletext_set_video_filename(ce->path);
         custom_show_strap_pos = -STRAP_DURATION_SEC * 1000LL * 1000LL;
         load_strap(ce->path);
         break;
@@ -758,6 +760,7 @@ int main(int argc, char *argv[]) {
     }
     if (state == PLAYER_STOPPED || state == PLAYER_RUNNING) channel_select_tick();
     process_input();
+    if (frame % 6 == 0) teletext_set_video_position(current_position/1000);
     usleep(1000000 / 60);
   }
 }

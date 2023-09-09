@@ -2,6 +2,8 @@ const { spawn } = require('child_process');
 const { readFileSync } = require('fs');
 const { exit } = require('process');
 const { charMap, x26CharMap } = require('./unicode');
+const readline = require('readline');
+const rl = readline.createInterface(process.stdin);
 
 function printBufferWithControlCharacters(buffer) {
   for (let i = 0; i < buffer.length; i++) {
@@ -194,6 +196,8 @@ childProcess.on('exit', (code, signal) => {
 process.on('SIGTERM',function(){
   process.exit(1);
 });
+
+rl.on('line', processInput);
 
 const BLACK = "\0";
 const RED = "\x01";
@@ -428,7 +432,9 @@ async function main() {
   }
   childProcess.stdin.end();
 }
-
+function processInput(buf) {
+  pagePrintAt(content[200], buf.substring(0,40), 0, 1);
+}
 main();
 
 function generateBinaryPacket() {
