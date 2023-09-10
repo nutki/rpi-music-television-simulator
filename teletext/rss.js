@@ -5,9 +5,26 @@ const { exit } = require('process');
 
 // https://github.com/kazuhikoarase/qrcode-generator/blob/master/js/qrcode.js
 
-const rssFeedURL = 'https://www.billboard.com/feed';
-//const rssFeedURL = "https://www.nme.com/news/music/feed"
-//const rssFeedURL = 'https://feeds.arstechnica.com/arstechnica/index/';
+const params = {
+Billboard: {
+  rssFeedURL: 'https://www.billboard.com/feed',
+  includeCategories: ['Music', 'Music News', 'Awards'],
+  excludeCategories: ['Video', 'Product Recommendations', 'Elon Musk'],
+  filterContent: '.injected-related-story,.wp-block-embed',
+},
+NME: {
+  rssFeedURL: "https://www.nme.com/news/music/feed",
+  includeCategories: ['Music', 'Music News', 'Awards'],
+  excludeCategories: ['Elon Musk'],
+  filterContent: '.twitter-tweet,.tiktok-embed,.post-content-read-more,ul>li:only-child>strong:only-child',
+},
+Ars: {
+  rssFeedURL: 'https://feeds.arstechnica.com/arstechnica/index/',
+  excludeCategories: ['Elon Musk'],
+  filterContent: 'intro-image,pp:not(div#rss-wrap p)',
+},
+};
+
 function formatParagraphs(paragraphs) {
   const maxLineLength = 40;
   let formattedText = "";
@@ -34,7 +51,8 @@ function formatParagraphs(paragraphs) {
 
 
 // Function to fetch and parse the RSS feed
-async function fetchAndParseRSSFeed() {
+async function fetchAndParseRSSFeed(feedName) {
+  const { rssFeedURL, includeCategories, excludeCategories, filterContent }  = params[feedName || 'Billboard'];
   try {
     const response = await fetch(rssFeedURL);
     if (!response.ok) {
@@ -49,36 +67,36 @@ async function fetchAndParseRSSFeed() {
 
     // Extract and format plain text from the parsed data
     const items = parsedData.rss.channel[0].item;
-    const plainTextItems = items.map((item) => {
-      // Use cheerio to parse HTML content and extract plain text
+    const result = [];
+    result.title = parsedData.rss.channel[0].title[0];
+    items.forEach((item) => {
+      if (includeCategories && !item.category.some(c => includeCategories.includes(c))) return;
+      if (excludeCategories && item.category.some(c => excludeCategories.includes(c))) return;
       const $ = cheerio.load(item['content:encoded'][0]);
-      // Remove elements with the "injected-related-story" class
-      $('.injected-related-story,.wp-block-embed,.post-content-read-more,ul>li:only-child>strong:only-child,.intro-image,pp:not(div#rss-wrap p)').remove();
-      // if ($('.pmc-ecomm-disclaimer').length > 0) {
-      //   // Skip this item
-      //   return '';
-      // }
-      $('strong').each(function () {
-        const strongText = $(this).text();
-        $(this).text(`(${strongText})`);
-      });
-      $('em').each(function () {
-        const strongText = $(this).text();
-        $(this).text(`{${strongText}}`);
-      });
+      if (filterContent) $(filterContent).remove();
+      // $('strong').each(function () {
+      //   const strongText = $(this).text();
+      //   $(this).text(`[${strongText}]`);
+      // });
+      // $('em').each(function () {
+      //   const strongText = $(this).text();
+      //   $(this).text(`{${strongText}}`);
+      // });
       const plainTextContent = $.text();
       const cleanedText = plainTextContent.replace(/[\t ]{2,}/g, ' ').replace(/^[\t ]/mg, '').replace(/\n{2,}/g, '\n');
-
-      return `Title ${item.title[0].length}: ${item.title[0]}\nCategory: ${item.category}\nGuid: ${item.guid[0]}\nDescription ${cleanedText.length}:\n${formatParagraphs(cleanedText)}\n\n`;
+      result.push({
+        title: item.title[0],
+        url: item.guid[0]?.startsWith('http') ? item.guid[0] : item.link[0],
+        text: cleanedText,
+      });
     });
-
-    // Join the plain text items into a single string
-    const plainTextFeed = plainTextItems.join('\n');
-
-    console.log(plainTextFeed);
+    return result;
   } catch (error) {
     console.error('Error:', error);
   }
+  return [];
 }
 
-fetchAndParseRSSFeed();
+module.exports = {
+  fetchAndParseRSSFeed,
+}

@@ -3,6 +3,7 @@ const { readFileSync } = require('fs');
 const { exit } = require('process');
 const { charMap, x26CharMap } = require('./unicode');
 const readline = require('readline');
+const { fetchAndParseRSSFeed } = require('./rss');
 const rl = readline.createInterface(process.stdin);
 
 function printBufferWithControlCharacters(buffer) {
@@ -167,6 +168,7 @@ const linePrintRawAt = (line, str, x) => {
 
 const pagePrintAt = (page, str, x, y) => {
   let pos = x + 2, extraPos = y * 40 + x;
+  if (y>25) return;
   const line = getPageLine(page, y);
   for (const ch of str) if (pos < 42) {
     line.writeUInt8(parity[ch in charMap ? charMap[ch] : ch.codePointAt(0) < 128 ? ch.codePointAt(0) : 32], pos++);
@@ -542,6 +544,9 @@ function processInput(buf) {
 }
 const top20charts = parseChartData();
 makeChartPage();
+fetchAndParseRSSFeed().then(r => {
+  newsPageFromParsedRSS(r);
+});
 setInterval(makeChartPage, 60 * 60 * 1000);
 main();
 
@@ -612,7 +617,7 @@ function findLineBreak(line, n = 40) {
     if (line[p] === ' ' || line[p] <= WHITE) break;
   }
   const pp = p < n / 2 ? n : p;
-  return [line.substring(0, p), line.substring(p).trimStart()];
+  return [line.substring(0, p), ...findLineBreak(line.substring(p).trimStart(), n)];
 }
 
 function makeChartPage() {
@@ -648,5 +653,21 @@ function makeChartPage() {
       pagePrintAtLeft(page, line1, 0, y++, 40);
       if (line2) pagePrintAtRight(page, line2, 0, y++, 40);
     }
+  }
+}
+function newsPageFromParsedRSS(articles) {
+  const index = content[500] = newPage({magazine: 5});
+  let y = 2;
+  let color = WHITE;
+  let i = 0;
+  pagePrintAt(index, RED+NEW_BACKGROUND+BLACK, 0, 1);
+  pagePrintAtCenter(index, articles.title, 3, 1, 35);
+  for (const { title } of articles) {
+    const [line1, line2, line3] = findLineBreak((501 + 10 * i).toString() + color + title, 39);
+    pagePrintAtLeft(index, YELLOW+line1, 0, y++, 40);
+    if (line2) pagePrintAtLeft(index, color+line2, 0, y++, 40);
+    if (line3) pagePrintAtLeft(index, color+line3, 0, y++, 40);
+    color = color === WHITE ? CYAN : WHITE;
+    i++;
   }
 }
