@@ -633,10 +633,11 @@ function makeChartPage() {
       "\x14\x1d\x13\x1c\x7f|4\x7f \x7fj5j5\x7f \x7f j5h|\x7f\x14\x1d \x11`~'   \"o'\"ot ",
       "\x14//,,,,,,,,,,,,,,,,,,,,,////////////////",
       "\x03\x1d\x04MTV'S EURO TOP 20 VIDEO COUNTDOWN\x01   ",
-      "    Last                        01/04/95",
-      "    week                                ",
-      "","","","","","","","","","","","","","","","","",
-      ]});
+      "    Last",
+      "    week",
+      "","","","","","","","","","","","","","","","",
+      "\x01Index    \x02         \x03         \x06" + (i ? " 1-10" : "11-20"),
+      ], links: [100, , ,210+1-i]});
     pagePrintAt(page, (i+1)+'/2', 37, 5);
     pagePrintAt(page, chartDate.substring(8)+'/'+chartDate.substring(5, 7)+'/'+chartDate.substring(2, 4), 32, 6);
     let y = 9;
