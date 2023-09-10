@@ -78,7 +78,7 @@ const sendTeletext = async (buffers) => {
 
 // Create the child process
 const childProcess = spawn('../raspi-teletext/teletext', ['-']);
-// const fileContent = readFileSync('P101-0004(1).t42');
+// const fileContent = readFileSync('/home/pi/P8FF-3F7F.t42');
 // printBufferWithControlCharacters(fileContent);
 // exit(0)
 const newPage = (options = {}) => {
@@ -87,7 +87,7 @@ const newPage = (options = {}) => {
   const subtitle = options.subtitle || false;
   const links = options.links || [];
   options.content?.forEach((str, i) => {
-    if (str) {
+    if (str !== undefined) {
       const buf = lines[i+1] = Buffer.alloc(42, 32);
       setPacketAddress(buf, 0, magazine, i+1);
       let pos = 2;
@@ -279,9 +279,32 @@ const p100 = newPage({ content: [
 " ",
 " ",
 "\x01MTV Today\x02UK Today \x03Charts   \x06Subtitles",
-], links: [100,102,105,888]});
+], links: [100,102,210,888]});
 content[101] = newPage({ subtitle: true });
 
+content[194] = newPage({ content: [
+"   \x13||4| |h||4|||h||4||\x11      `~t       ",
+"\x14\x1d\x13\x1c\x7f  \x7f|\x7fj}~5\x7f|w j5h}|\x14\x1d   \x11x?!+}0x}0  ",
+"\x14\x1d\x13\x1c\x7f|4\x7f \x7fj5j5\x7f \x7f j5h|\x7f\x14\x1d \x11`~'   \"o'\"ot ",
+"\x14//,,,,,,,,,,,,,,,,,,,,,////////////////",
+"\x03\x1d\x04MTV'S EURO TOP 20 VIDEO COUNTDOWN\x011/3",
+"    Last                        01/04/95",
+"    week                                ",
+"                                        ",
+"\x03 1\x07 1\x06Ini Kamoze\x07Here Comes The...     ",
+"\x03 2\x07 4\x06Annie Lennox\x07No More I Love You's",
+"\x03 3\x07 2\x06Scooter\x07Move Your Ass!           ",
+"\x03 4\x07 3\x06Mars Oh Tears\x07Don't Lie          ",
+"\x03 5\x07 8\x06Snap\x07The First, The Last Eternity",
+"\x03 6\x07 5\x06Rednex\x07Old Pop In An Oak         ",
+"\x03 7\x07 9\x06Scatman John\x07Scatman             ",
+"\x03 8\x07 6\x06Captain Hollywood Project\x07Flying ",
+"   \x07  \x07                             High",
+"\x03 9\x0711\x06Cranberries\x07Zombie               ",
+"\x0310\x0714\x06U96\x07Club Bizarre                 ",
+"                                        ",
+"\x03Charts Index 210         Music News 150"
+]});
 content[195] = newPage({ content: [
   "\x01\x1d\x07 MTV UK VIEWERS PLEASE SEE PAGE 170  ",
   "\x03MUSIC TELEVISION(R)  \x06M.JACKSON    \x03256",
@@ -517,6 +540,9 @@ function processInput(buf) {
     console.log('Unknown player command: ', buf);
   }
 }
+const top20charts = parseChartData();
+makeChartPage();
+setInterval(makeChartPage, 60 * 60 * 1000);
 main();
 
 function generateBinaryPacket() {
@@ -553,4 +579,73 @@ function parseSrt(subtitleText) {
     });
   }
   return subtitles;
+}
+
+function parseChartData() {
+  try {
+    const fileContent = readFileSync('teletext/top20.txt', 'utf8');
+    const lines = fileContent.split('\n');
+    const chartData = {};
+    for (const line of lines) {
+      const [chartDate, position, lastWeekPosition, weeksInChart, title, artist] = line.split('|');
+      if (!chartDate) continue;
+      if (!chartData[chartDate]) chartData[chartDate] = [];
+      chartData[chartDate][parseInt(position)-1] = {
+        artist,
+        title,
+        lastWeekPosition: /^\d+$/.test(lastWeekPosition) ? parseInt(lastWeekPosition) : lastWeekPosition,
+        weeksInChart: /^\d+$/.test(weeksInChart) ? parseInt(weeksInChart) : weeksInChart,
+      };
+    }
+    return chartData;
+  } catch (error) {
+    console.error('Error:', error.message);
+    return null;
+  }
+}
+
+function findLineBreak(line, n = 40) {
+  const l = line.length;
+  if (l <= n) return [line];
+  let p;
+  for(p = n; p >= 0; p--) {
+    if (line[p] === ' ' || line[p] <= WHITE) break;
+  }
+  const pp = p < n / 2 ? n : p;
+  return [line.substring(0, p), line.substring(p).trimStart()];
+}
+
+function makeChartPage() {
+  const date = new Date();
+  let day = date.getDate().toString().padStart(2, '0');
+  let month = (date.getMonth() + 1).toString().padStart(2, '0');
+  let seed = date.getFullYear() + date.getDate() * 3 + date.getMonth() * 5;
+  let year = 1990 + seed % 10;
+  const baseDate = `${year}-${month}-${day}`;
+  const allDates = Object.keys(top20charts).sort().reverse();
+  const chartDate = allDates.find(x => x <= baseDate) || allDates[0];
+  const data = top20charts[chartDate];
+
+  for (const i of [0,1]) {
+    const page = content[210+i] = newPage({ magazine: 2, content: [
+      "   \x13||4| |h||4|||h||4||\x11      `~t       ",
+      "\x14\x1d\x13\x1c\x7f  \x7f|\x7fj}~5\x7f|w j5h}|\x14\x1d   \x11x?!+}0x}0  ",
+      "\x14\x1d\x13\x1c\x7f|4\x7f \x7fj5j5\x7f \x7f j5h|\x7f\x14\x1d \x11`~'   \"o'\"ot ",
+      "\x14//,,,,,,,,,,,,,,,,,,,,,////////////////",
+      "\x03\x1d\x04MTV'S EURO TOP 20 VIDEO COUNTDOWN\x01   ",
+      "    Last                        01/04/95",
+      "    week                                ",
+      "","","","","","","","","","","","","","","","","",
+      ]});
+    pagePrintAt(page, (i+1)+'/2', 37, 5);
+    pagePrintAt(page, chartDate.substring(8)+'/'+chartDate.substring(5, 7)+'/'+chartDate.substring(2, 4), 32, 6);
+    let y = 9;
+    for (let j = 0; j < 10; j++) {
+      const n = i*10+j;
+      const line = YELLOW + (n+1).toString().padStart(2) + WHITE + data[n].lastWeekPosition.toString().padStart(2) + CYAN + data[n].artist + WHITE + data[n].title;
+      const [line1, line2] = findLineBreak(line);
+      pagePrintAtLeft(page, line1, 0, y++, 40);
+      if (line2) pagePrintAtRight(page, line2, 0, y++, 40);
+    }
+  }
 }
