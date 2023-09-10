@@ -87,6 +87,7 @@ const newPage = (options = {}) => {
   const magazine = (options.magazine || 1) & 7;
   const subtitle = options.subtitle || false;
   const links = options.links || [];
+  const subpage = options.subpage || 0;
   options.content?.forEach((str, i) => {
     if (str !== undefined) {
       const buf = lines[i+1] = Buffer.alloc(42, 32);
@@ -97,6 +98,7 @@ const newPage = (options = {}) => {
   });
   return {
     magazine,
+    subpage,
     subtitle,
     lines,
     extraChars: [],
@@ -168,7 +170,7 @@ const linePrintRawAt = (line, str, x) => {
 
 const pagePrintAt = (page, str, x, y) => {
   let pos = x + 2, extraPos = y * 40 + x;
-  if (y>25) return;
+  if (y>24) return;
   const line = getPageLine(page, y);
   for (const ch of str) if (pos < 42) {
     line.writeUInt8(parity[ch in charMap ? charMap[ch] : ch.codePointAt(0) < 128 ? ch.codePointAt(0) : 32], pos++);
@@ -458,6 +460,7 @@ function formatDuration(d) {
 }
 
 const doubleHeightSubs = true;
+const lastSubpages = [];
 async function main() {
   const header = Buffer.alloc(42, parity[32]);
   header.writeUInt8(hamming84[0], 0);
@@ -466,7 +469,12 @@ async function main() {
   header.writeUInt8(hamming84[1], 9); // C11-C14
   linePrintRawAt(header, YELLOW + "MTVText", 11);
   let lastSub;
-  for (let i = 0;; i++) for (const [idx, page] of Object.entries(content)) {
+  for (let i = 0;; i++) for (let [idx, page] of Object.entries(content)) {
+    if (Array.isArray(page)) {
+      const nextSubpage = (lastSubpages[idx] + 1 || 1) < page.length ? (lastSubpages[idx] + 1 || 1) : 0;
+      page = page[nextSubpage];
+      lastSubpages[idx] = nextSubpage;
+    }
     if (idx === "888") {
       const sub = subs && getSubtitle(subs);
       if (sub !== lastSub) {
@@ -490,8 +498,8 @@ async function main() {
     header.writeUInt8(hamming84[n&0x0f], 2);
     header.writeUInt8(hamming84[(n&0xf0)>>4], 3);
     // Subpage + C4-C6
-    header.writeUInt8(hamming84[0], 4);
-    header.writeUInt8(hamming84[page.clean?0:8], 5); // C4 - erase
+    header.writeUInt8(hamming84[page.subpage%10], 4);
+    header.writeUInt8(hamming84[(page.clean?0:8) + (page.subpage/10|0)], 5); // C4 - erase
     header.writeUInt8(hamming84[0], 6);
     header.writeUInt8(hamming84[page.subtitle?8:0], 7); // C6 - subtitle
     linePrintRawAt(header, `${i%10}`, 20);
@@ -662,12 +670,27 @@ function newsPageFromParsedRSS(articles) {
   let i = 0;
   pagePrintAt(index, RED+NEW_BACKGROUND+BLACK, 0, 1);
   pagePrintAtCenter(index, articles.title, 3, 1, 35);
-  for (const { title } of articles) {
-    const [line1, line2, line3] = findLineBreak((501 + 10 * i).toString() + color + title, 39);
+  for (const { title, text } of articles) {
+    const [line1, line2, line3] = findLineBreak((501 + i).toString() + color + title, 39);
     pagePrintAtLeft(index, YELLOW+line1, 0, y++, 40);
-    if (line2) pagePrintAtLeft(index, color+line2, 0, y++, 40);
-    if (line3) pagePrintAtLeft(index, color+line3, 0, y++, 40);
+    if (line2 && y < 24) pagePrintAtLeft(index, color+line2, 0, y++, 40);
+    if (line3 && y < 24) pagePrintAtLeft(index, color+line3, 0, y++, 40);
     color = color === WHITE ? CYAN : WHITE;
+    const paragraphs = text.split('\n').map(x => ' ' + x.trim()).filter(x => x !== ' ').flatMap(x => findLineBreak(x, 39));
+    let page, yy = 24;
+    const pages = [];
+    const shortTile = title.length <= 32 ? title : title.substring(0, 29)+'...';
+    for (const line of paragraphs) {
+      if (yy === 24) {
+        page = newPage({magazine: 5, subpage: pages.length + 1});
+        pages.push(page);
+        pagePrintAtLeft(page, RED+NEW_BACKGROUND+BLACK+shortTile, 0, 1, 40);
+        pagePrintAtRight(page, CYAN+pages.length.toString()+'/'+Math.ceil(paragraphs.length/22), 35, 1, 5);
+        yy = 2;
+      }
+      pagePrintAtLeft(page, line, 1, yy++);
+    }
+    content[501 + i] = pages;
     i++;
   }
 }
