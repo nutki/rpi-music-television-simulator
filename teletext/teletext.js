@@ -270,9 +270,9 @@ const p100 = newPage({ content: [
 "\x135      \x7fj|\x7f\x14\x7f5\"%\x13\x7fj",
 "\x135      ?j\x7f\x7f\x14\"   \x13?j",
 "\x13-,,,,,,,///,,,,,,,/",
-"\x06NME Music News \x03500  \x07Subtitles    \x03888",
-"\x06Billboard News \x03600  \x07Info overlay \x03101",
-"\x06               \x03     \x07Gallery      \x03195",
+"\x06NME Music News \x03520  \x07Subtitles    \x03888",
+"\x06Billboard News \x03500  \x07Info overlay \x03101",
+"\x06Ars Technica   \x03540  \x07Gallery      \x03195",
 "\x06               \x03     \x07MTV Top 20   \x03210",
 " ",
 " ",
@@ -552,8 +552,15 @@ function processInput(buf) {
 }
 const top20charts = parseChartData();
 makeChartPage();
+  // TODO set interval
 fetchAndParseRSSFeed().then(r => {
-  newsPageFromParsedRSS(r);
+  newsPageFromParsedRSS(r, 500, 'Billboard Music News');
+});
+fetchAndParseRSSFeed('NME').then(r => {
+  newsPageFromParsedRSS(r, 520, 'NME Music News');
+});
+fetchAndParseRSSFeed('Ars').then(r => {
+  newsPageFromParsedRSS(r, 540, 'Ars Technica News');
 });
 setInterval(makeChartPage, 60 * 60 * 1000);
 main();
@@ -625,7 +632,7 @@ function findLineBreak(line, n = 40) {
     if (line[p] === ' ' || line[p] <= WHITE) break;
   }
   const pp = p < n / 2 ? n : p;
-  return [line.substring(0, p), ...findLineBreak(line.substring(p).trimStart(), n)];
+  return [line.substring(0, pp), ...findLineBreak(line.substring(pp).trimStart(), n)];
 }
 
 function makeChartPage() {
@@ -663,15 +670,17 @@ function makeChartPage() {
     }
   }
 }
-function newsPageFromParsedRSS(articles) {
-  const index = content[500] = newPage({magazine: 5});
+function newsPageFromParsedRSS(articles, pageNumber, title) {
+  const index = content[pageNumber] = newPage({magazine: pageNumber/100|0});
   let y = 2;
   let color = WHITE;
   let i = 0;
   pagePrintAt(index, RED+NEW_BACKGROUND+BLACK, 0, 1);
-  pagePrintAtCenter(index, articles.title, 3, 1, 35);
+  pagePrintAtCenter(index, title, 3, 1, 35);
   for (const { title, text } of articles) {
-    const [line1, line2, line3] = findLineBreak((501 + i).toString() + color + title, 39);
+    // TODO find stable number when refetching rss
+    const articlePageNumber = pageNumber + i + 1;
+    const [line1, line2, line3] = findLineBreak(articlePageNumber.toString() + color + title, 39);
     pagePrintAtLeft(index, YELLOW+line1, 0, y++, 40);
     if (line2 && y < 24) pagePrintAtLeft(index, color+line2, 0, y++, 40);
     if (line3 && y < 24) pagePrintAtLeft(index, color+line3, 0, y++, 40);
@@ -682,15 +691,15 @@ function newsPageFromParsedRSS(articles) {
     const shortTile = title.length <= 32 ? title : title.substring(0, 29)+'...';
     for (const line of paragraphs) {
       if (yy === 24) {
-        page = newPage({magazine: 5, subpage: pages.length + 1});
+        page = newPage({magazine: articlePageNumber/100|0, subpage: pages.length + 1});
         pages.push(page);
         pagePrintAtLeft(page, RED+NEW_BACKGROUND+BLACK+shortTile, 0, 1, 40);
         pagePrintAtRight(page, CYAN+pages.length.toString()+'/'+Math.ceil(paragraphs.length/22), 35, 1, 5);
         yy = 2;
       }
-      pagePrintAtLeft(page, line, 1, yy++);
+      pagePrintAtLeft(page, line, 1, yy++, 39);
     }
-    content[501 + i] = pages;
+    content[articlePageNumber] = pages;
     i++;
   }
 }

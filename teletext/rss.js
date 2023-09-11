@@ -1,4 +1,4 @@
-const fetch = require('node-fetch');
+const fetch = require('node-fetch').default;
 const xml2js = require('xml2js');
 const cheerio = require('cheerio'); // Import cheerio library
 const { exit } = require('process');
@@ -21,7 +21,7 @@ NME: {
 Ars: {
   rssFeedURL: 'https://feeds.arstechnica.com/arstechnica/index/',
   excludeCategories: ['Elon Musk'],
-  filterContent: 'intro-image,pp:not(div#rss-wrap p)',
+  filterContent: '.intro-image,p:not(div#rss-wrap p)',
 },
 };
 
@@ -68,7 +68,6 @@ async function fetchAndParseRSSFeed(feedName) {
     // Extract and format plain text from the parsed data
     const items = parsedData.rss.channel[0].item;
     const result = [];
-    result.title = parsedData.rss.channel[0].title[0];
     items.forEach((item) => {
       if (includeCategories && !item.category.some(c => includeCategories.includes(c))) return;
       if (excludeCategories && item.category.some(c => excludeCategories.includes(c))) return;
