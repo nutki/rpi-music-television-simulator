@@ -658,7 +658,9 @@ function makeChartPage() {
     let y = 9;
     for (let j = 0; j < 10; j++) {
       const n = i*10+j;
-      const line = YELLOW + (n+1).toString().padStart(2) + WHITE + data[n].lastWeekPosition.toString().padStart(2) + CYAN + data[n].artist + WHITE + data[n].title;
+      const artist = CYAN + data[n].artist.replace(/[Ff]eaturing/, 'ft.').replace(/ +/g, CYAN);
+      const lastWeek = data[n].lastWeekPosition.toString().replace(/^N|New|-$/i, 'NE');
+      const line = YELLOW + (n+1).toString().padStart(2) + WHITE + lastWeek.padStart(2) + artist + WHITE + data[n].title;
       const [line1, line2] = findLineBreak(line);
       pagePrintAtLeft(page, line1, 0, y++, 40);
       if (line2) pagePrintAtRight(page, line2, 0, y++, 40);
@@ -685,7 +687,9 @@ function makeScrapedChartPage({data, title, date, parsedDate}, pageNumber) {
     let y = 9;
     for (let j = 0; j < 10 && i + j < data.length; j++) {
       const n = i+j;
-      const line = YELLOW + data[n].position.padStart(2) + WHITE + data[n].lastWeek.padStart(2) + CYAN + data[n].artist + WHITE + data[n].title;
+      const artist = CYAN + data[n].artist.replace(/featuring/i, 'Ft.').replace(/ +/g, CYAN);
+      const lastWeek = data[n].lastWeek.replace(/^(N|New|-)$/i, 'NE');
+      const line = YELLOW + data[n].position.padStart(2) + WHITE + lastWeek.padStart(2) + artist + WHITE + data[n].title;
       const [line1, line2] = findLineBreak(line);
       pagePrintAtLeft(page, line1, 0, y++, 40);
       if (line2) pagePrintAtRight(page, line2, 0, y++, 40);
