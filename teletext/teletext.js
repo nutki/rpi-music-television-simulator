@@ -3,8 +3,7 @@ const { readFileSync } = require('fs');
 const { exit } = require('process');
 const { charMap, x26CharMap } = require('./unicode');
 const readline = require('readline');
-const { fetchAndParseRSSFeed } = require('./rss');
-const { fetchChart } = require('./charts');
+const { Worker } = require('worker_threads');
 const rl = readline.createInterface(process.stdin);
 
 function printBufferWithControlCharacters(buffer) {
@@ -524,23 +523,39 @@ function processInput(buf) {
     console.log('Unknown player command: ', buf);
   }
 }
+
+const worker = new Worker('./teletext/parserworker.js');
+const rpcs = new Map();
+let rpcid = 0;
+worker.on('message', (message) => {
+  rpcs.get(message.id)?.(message.result);
+  rpcs.delete(message.id);
+});
+function rpcCall(method, ...params) {
+  return new Promise((resolve) => {
+    rpcs.set(rpcid, resolve);
+    worker.postMessage({ method, params, id: rpcid });
+    rpcid++;
+  });
+}
+
 const top20charts = parseChartData();
 makeChartPage();
+setInterval(makeChartPage, 60 * 60 * 1000);
   // TODO set interval
-fetchAndParseRSSFeed().then(r => {
+rpcCall('rss', 'Billboard').then(r => {
   newsPageFromParsedRSS(r, 500, 'Billboard Music News');
 });
-fetchAndParseRSSFeed('NME').then(r => {
+rpcCall('rss', 'NME').then(r => {
   newsPageFromParsedRSS(r, 520, 'NME Music News');
 });
-fetchAndParseRSSFeed('Ars').then(r => {
+rpcCall('rss', 'Ars').then(r => {
   newsPageFromParsedRSS(r, 540, 'Ars Technica News');
 });
-setInterval(makeChartPage, 60 * 60 * 1000);
-fetchChart('uktop40').then(r => {
+rpcCall('chart', 'uktop40').then(r => {
   makeScrapedChartPage(r, 212);
 });
-fetchChart('billboard100').then(r => {
+rpcCall('chart', 'billboard100').then(r => {
   makeScrapedChartPage(r, 213);
 });
 main();
