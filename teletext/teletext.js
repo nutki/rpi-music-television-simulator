@@ -4,6 +4,7 @@ const { exit } = require('process');
 const { charMap, x26CharMap } = require('./unicode');
 const readline = require('readline');
 const { fetchAndParseRSSFeed } = require('./rss');
+const { fetchChart } = require('./charts');
 const rl = readline.createInterface(process.stdin);
 
 function printBufferWithControlCharacters(buffer) {
@@ -65,7 +66,12 @@ function sleep(ms) {
   });
 }
 const sendTeletext = async (buffers) => {
-  for (const buffer of buffers) childProcess.stdin.write(buffer);
+  for (const buffer of buffers) {
+    const res = childProcess.stdin.write(buffer);
+    if (!res) {
+      await new Promise(resolve => childProcess.stdin.once('drain', () => resolve()));
+    }
+  }
   const lines = buffers.reduce((a, c) => a + c.length, 0)/42;
   const band = 32 * 25;
   const currentTime = new Date();
@@ -244,11 +250,13 @@ const BLACK_BACKGROUND = "\x1C";
 const NEW_BACKGROUND = "\x1D";
 const HOLD_MOSAICS = "\x1E";
 const RELEASE_MOSAICS = "\x1F";
+let global_s;
 const headerAddTime = (buf) => {
   const date = new Date();
   const h = date.getHours();
   const m = date.getMinutes();
   const s = date.getSeconds();
+  global_s = s;
   const time = RED + `${h/10|0}${h%10}:${m/10|0}${m%10}:${s/10|0}${s%10}`;
   linePrintRawAt(buf, time, 31);
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -563,6 +571,12 @@ fetchAndParseRSSFeed('Ars').then(r => {
   newsPageFromParsedRSS(r, 540, 'Ars Technica News');
 });
 setInterval(makeChartPage, 60 * 60 * 1000);
+fetchChart('uktop40').then(r => {
+  makeScrapedChartPage(r, 212);
+});
+fetchChart('billboard100').then(r => {
+  makeScrapedChartPage(r, 213);
+});
 main();
 
 function generateBinaryPacket() {
@@ -669,6 +683,35 @@ function makeChartPage() {
       if (line2) pagePrintAtRight(page, line2, 0, y++, 40);
     }
   }
+}
+function makeScrapedChartPage({data, title, date, parsedDate}, pageNumber) {
+  const subpages = [];
+  for (let i = 0; i < data.length; i+=10) {
+    const page = newPage({ magazine: pageNumber/100|0, subpage: i/10+1, content: [
+      "   \x13||4| |h||4|||h||4||\x11      `~t       ",
+      "\x14\x1d\x13\x1c\x7f  \x7f|\x7fj}~5\x7f|w j5h}|\x14\x1d   \x11x?!+}0x}0  ",
+      "\x14\x1d\x13\x1c\x7f|4\x7f \x7fj5j5\x7f \x7f j5h|\x7f\x14\x1d \x11`~'   \"o'\"ot ",
+      "\x14//,,,,,,,,,,,,,,,,,,,,,////////////////",
+      "\x03\x1d\x04                               \x01     ",
+      "    Last",
+      "    week",
+      "","","","","","","","","","","","","","","","",
+      "\x01Index    \x02         \x03         \x06",
+      ], links: [100, , ,]});
+    pagePrintAtRight(page, (i/10+1).toString()+'/'+Math.ceil(data.length/10), 35, 5, 5);
+    pagePrintAtRight(page, parsedDate || date, 10, 6, 30);
+    pagePrintAtCenter(page, title, 3, 5, 32);
+    let y = 9;
+    for (let j = 0; j < 10 && i + j < data.length; j++) {
+      const n = i+j;
+      const line = YELLOW + data[n].position.padStart(2) + WHITE + data[n].lastWeek.padStart(2) + CYAN + data[n].artist + WHITE + data[n].title;
+      const [line1, line2] = findLineBreak(line);
+      pagePrintAtLeft(page, line1, 0, y++, 40);
+      if (line2) pagePrintAtRight(page, line2, 0, y++, 40);
+    }
+    subpages.push(page);
+  }
+  if (subpages.length) content[pageNumber] = subpages;
 }
 function newsPageFromParsedRSS(articles, pageNumber, title) {
   const index = content[pageNumber] = newPage({magazine: pageNumber/100|0});
