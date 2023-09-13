@@ -266,7 +266,7 @@ const headerAddTime = (buf) => {
 }
 
 const content = [];
-const p100 = newPage({ content: [
+content[100] = newPage({ content: [
 "\x03MUSIC TELEVISION(R)",
 "\x137######;o\x7f?######;\x7f",
 "\x135      \"m&       ?*",
@@ -280,7 +280,7 @@ const p100 = newPage({ content: [
 "\x13-,,,,,,,///,,,,,,,/",
 "\x06NME Music News \x03520  \x07Subtitles    \x03888",
 "\x06Billboard News \x03500  \x07Info overlay \x03101",
-"\x06Ars Technica   \x03540  \x07Gallery      \x03195",
+"\x06Ars Technica   \x03540  \x07Gallery      \x03199",
 "\x06               \x03     \x07MTV Top 20   \x03210",
 " ",
 " ",
@@ -294,7 +294,7 @@ const p100 = newPage({ content: [
 ], links: [100,102,210,888]});
 content[101] = newPage({ subtitle: true });
 
-content[194] = newPage({ content: [
+content[199] = [ newPage({ subpage: 1, content: [
 "   \x13||4| |h||4|||h||4||\x11      `~t       ",
 "\x14\x1d\x13\x1c\x7f  \x7f|\x7fj}~5\x7f|w j5h}|\x14\x1d   \x11x?!+}0x}0  ",
 "\x14\x1d\x13\x1c\x7f|4\x7f \x7fj5j5\x7f \x7f j5h|\x7f\x14\x1d \x11`~'   \"o'\"ot ",
@@ -316,8 +316,7 @@ content[194] = newPage({ content: [
 "\x0310\x0714\x06U96\x07Club Bizarre                 ",
 "                                        ",
 "\x03Charts Index 210         Music News 150"
-]});
-content[195] = newPage({ content: [
+]}), newPage({ subpage: 2, content: [
   "\x01\x1d\x07 MTV UK VIEWERS PLEASE SEE PAGE 170  ",
   "\x03MUSIC TELEVISION(R)  \x06M.JACKSON    \x03256",
   "\x137######;o\x7f?######;\x7f  \x06NO DOUBT     \x03257",
@@ -341,10 +340,7 @@ content[195] = newPage({ content: [
   "\x06Norway         \x03800  \x07Study Europe \x03305",
   " ",
   " ",
-  ]});
-
-  content[199] = newPage({
-  content:[
+  ]}), newPage({ subpage: 3, content:[
     "\x13<,,,lp  `,,,,t     \x06European Magazine  ",
     "\x135    +\x7f<!hx/ \x7f h?\x17\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f",
     "\x135     \" xo5x 'x?\x17\x7f\x7f\x7f\x7f?!/\x7f//\x7f/\x7f?o'*o\x7f\x7f\x7f\x7f",
@@ -369,8 +365,7 @@ content[195] = newPage({ content: [
     "\x03\x1d\x1d\x01PLAY THE MTV EURO TOP 20 GAME 425   ",
     "\x03\x1d\x07IN AUG. EACH 50th CALLER WJNS T-SHIRT",
   ],
-});
-content[198] = newPage({content:[
+}), newPage({ subpage: 4, content:[
   "\x02\x15\x02\x15\x15\x15\x15\x15                                ",
   "\x13  7###mp&###sk5`0\x03MUSIC TELEVISION(R)  ",
   "\x14\x1d\x135    ! p}'1*h?! \x17  `4         `4     ",
@@ -378,8 +373,7 @@ content[198] = newPage({content:[
   "\x14\x1d\x135   }0x \x7f o~!   \x17  \x7f5j\x7f./b\x7fnw \x7f5     ",
   "\x14\x1d\x135   \x7f\"j ? *%4   \x17  +-\"/.'*/*/ +-     ",
   "\x13  -,,,' *,,,,.!                        ",
-]});
-content[197] = newPage({content:[
+]}), newPage({ subpage: 5, content:[
   "\x11 k:26>7.245eijj4\x13og\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f",
   "\x11 u5ee5ue5e5?zjjj0\x13~\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f?",
   "\x115jjjj+w*ue=5%&::y\x13*\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f>t",
@@ -403,8 +397,7 @@ content[197] = newPage({content:[
   "\x14\x7f=={9(\x17j\x7f\x7f\x7f\x7f\x7f\x14'faoyw|\x17 k\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f?5\x14$9",
   "\x14\x7fo{$99\x17 \x7f\x7f\x1e\x7f\x16` \x14m:smg} \x17##    +\x7f\x7f/\x16x\x7f|p",
   "\x14\x7fo{9(\x16x\x17\x7f\x1e\x7f/\x16\x7f\x1ft\x14fx}}yv,p\x16 h\x7f\x7f}||~\x1d\x042/3",
-]});
-content[196] = newPage({content:[
+]}), newPage({ subpage: 6, content:[
   "\x03MUSIC TELEVISION(R)  \x06WIN A HOLIDAY TO ",
   "\x137######;o\x7f?######;\x7f  \x06ANTIGUA WITH MTV ",
   "\x135      \"m&       ?*  \x06WORLD TOUR   \x03188",
@@ -428,36 +421,10 @@ content[196] = newPage({content:[
   "                                        ",
   "\x07\x1d\x04 BEAVIS & BUTT-HEAD DO AMERICA 358   ",
   "\x07\x1d\x01 +LOOKALIKE COMPETITION & TOUR BUS   ",
-]});
-content[100] = p100;
+]})
+];
 content[888] = newPage({subtitle:true, magazine:8});
 
-const rss = [" After the anonymous artist Ghostwriter",
-"went viral with their A.I.-generated",
-"track “Heart on My Sleeve” — which",
-"mimics Drake and The Weeknd — earlier",
-"this year, representatives for the",
-"unknown act recently disclosed in an",
-"interview with The New York Times that",
-"they submitted the controversial song",
-"for next year’s Grammy awards.",
-" Submitted for best rap song and song of",
-"the year, “Heart on My Sleeve” was",
-"eligible despite the use of A.I.",
-"technology on the record, Harvey Mason,",
-"jr., CEO of the Recording Academy,",
-"told The New York Times. “As far as the",
-"creative side, it’s absolutely eligible",
-"because it was written by a human,” he",
-"noted.",
-" Billboard has reached out to Drake and",
-"The Weeknd for comment.",
-" Last April, “Heart on My Sleeve” was",
-"pulled from streaming services after",
-"generating more than 600,000 plays on",
-]
-content[200] = newPage({magazine:2});
-rss.forEach((v, i) => pagePrintAt(content[200], v, 0, i+1));
 let subs;
 let playerPos = 0, playerDuration = 0, cropPosStart = 0, cropPosEnd = -1;
 function formatDuration(d) {
@@ -518,7 +485,6 @@ async function main() {
   childProcess.stdin.end();
 }
 function processInput(buf) {
-  pagePrintAt(content[200], buf.substring(0,40), 0, 1);
   if (buf[0] === 'F') {
     const playerFile = buf.substring(1);
     playerDuration = playerPos = cropPosStart = 0;
