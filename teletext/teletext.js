@@ -431,12 +431,6 @@ content[199] = [ newPage({ subpage: 1, content: [
   "\x07\x1d\x01 +LOOKALIKE COMPETITION & TOUR BUS   ",
 ]})
 ];
-content[106] = newPage();
-const qr = qrCreateTeletext();
-let qry = 24-qr.length;
-for (const buf of qr) {
-  pagePrintRawAt(content[106], MOSAIC_WHITE + buf.toString(), 40 - buf.length - 1, qry++);
-}
 content[888] = newPage({subtitle:true, magazine:8});
 
 let subs;
