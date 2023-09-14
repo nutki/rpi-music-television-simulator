@@ -4,7 +4,7 @@ const { exit } = require('process');
 const { charMap, x26CharMap } = require('./unicode');
 const readline = require('readline');
 const { Worker } = require('worker_threads');
-const { qrCreateTeletext } = require('./qrcodetest');
+const qrcode = require('./qrcode');
 const rl = readline.createInterface(process.stdin);
 
 function printBufferWithControlCharacters(buffer) {
@@ -628,16 +628,26 @@ function parseChartData() {
   }
 }
 
-function findLineBreak(line, n = 40, withColors = false) {
-  if (withColors && !(line.trimStart()[0] <= WHITE)) line = ' ' + line;
-  const l = line.length;
-  if (l <= n) return [line];
-  let p;
-  for(p = n; p >= 0; p--) {
-    if (line[p] === ' ' || line[p] <= WHITE) break;
+function findLineBreak(paras, nn = 40, withColors = false) {
+  const res = [];
+  if (typeof paras === 'string') paras = [paras];
+  for (let line of paras) for(;;) {
+    const n = typeof nn === 'function' ? nn(res.length) : nn;
+    if (withColors && !(line.trimStart()[0] <= WHITE)) line = ' ' + line;
+    const l = line.length;
+    if (l <= n) {
+      if (l) res.push(line);
+      break;
+    }
+    let p;
+    for(p = n; p >= 0; p--) {
+      if (line[p] === ' ' || line[p] <= WHITE) break;
+    }
+    const pp = p < n / 2 ? n : p;
+    res.push(line.substring(0, pp));
+    line = line.substring(pp).trimStart();
   }
-  const pp = p < n / 2 ? n : p;
-  return [line.substring(0, pp), ...findLineBreak(line.substring(pp).trimStart(), n, withColors)];
+  return res;
 }
 
 function makeChartPage() {
@@ -708,6 +718,28 @@ function makeScrapedChartPage({data, title, date, parsedDate}, pageNumber) {
   }
   if (subpages.length) content[pageNumber] = subpages;
 }
+function qrCreateTeletext(link) {
+  const qr = qrcode(0, 'L');
+  qr.addData(link.replace(/^https?:\/\//,''));
+  qr.make();
+  let x = qr.getModuleCount()+2;
+  const res = [];
+  const w = Math.ceil(x/2);
+  const h = Math.ceil(x/3);
+  for (let i = 0; i < h; i++) res[i] = Buffer.alloc(w, 32);
+  const isDark = (i,j) => i>0&&j>0&&i<x-1&&j<x-1?qr.isDark(i-1,j-1):i<0||j<0||i>=x||j>=x;
+  for (let i = 0; i<h;i++) {
+    for (let j = 0; j<w;j++) {
+      const v = [1,2,4,8,16,64].reduce((v, c, k) => isDark(i*3+(k>>1),j*2+(k&1))?v:v+c, 32);
+      res[i].writeUInt8(v,j);
+    }
+  }
+  return res;
+}
+module.exports = {
+    qrCreateTeletext
+}
+
 function newsPageFromParsedRSS(articles, pageNumber, title) {
   const index = content[pageNumber] = newPage({magazine: pageNumber/100|0});
   let y = 2;
@@ -715,7 +747,7 @@ function newsPageFromParsedRSS(articles, pageNumber, title) {
   let i = 0;
   pagePrintAt(index, RED+NEW_BACKGROUND+BLACK, 0, 1);
   pagePrintAtCenter(index, title, 3, 1, 35);
-  for (const { title, text } of articles) {
+  for (const { title, text, url } of articles) {
     // TODO find stable number when refetching rss
     const articlePageNumber = pageNumber + i + 1;
     const [line1, line2, line3] = findLineBreak(articlePageNumber.toString() + color + title, 39);
@@ -723,19 +755,29 @@ function newsPageFromParsedRSS(articles, pageNumber, title) {
     if (line2 && y < 24) pagePrintAtLeft(index, color+line2, 0, y++, 40);
     if (line3 && y < 24) pagePrintAtLeft(index, color+line3, 0, y++, 40);
     color = color === WHITE ? CYAN : WHITE;
-    const paragraphs = text.split('\n').map(x => ' ' + x.trim()).filter(x => x !== ' ').flatMap(x => findLineBreak(x, 40, true));
+    const rawParagraphs = text.split('\n').map(x => ' ' + x.trim()).filter(x => x !== ' ');
+    const lastPageStart = Math.floor((findLineBreak(rawParagraphs, 40, true).length-1)/22)*22;
+    const qr = qrCreateTeletext(url);
+    const qrW = qr[0].length+1, qrH = qr.length;
+    const paragraphs = findLineBreak(rawParagraphs, i => 40 - (i>=lastPageStart && i <lastPageStart + qrH ? qrW : 0), true);
     let page, yy = 24;
     const pages = [];
     const shortTile = title.length <= 32 ? title : title.substring(0, 29)+'...';
     for (const line of paragraphs) {
       if (yy === 24) {
         page = newPage({magazine: articlePageNumber/100|0, subpage: pages.length + 1});
+        if (pages.length*22 == lastPageStart) {
+          let yyqr = 2;
+          for (const l of qr) {
+            pagePrintRawAt(page, MOSAIC_WHITE + l.toString(), 40 - qrW, yyqr++);
+          }
+        }
         pages.push(page);
         pagePrintAtLeft(page, RED+NEW_BACKGROUND+BLACK+shortTile, 0, 1, 40);
         pagePrintAtRight(page, CYAN+pages.length.toString()+'/'+Math.ceil(paragraphs.length/22), 35, 1, 5);
         yy = 2;
       }
-      pagePrintAtLeft(page, line, 0, yy++, 40);
+      pagePrintAt(page, line, 0, yy++);
     }
     content[articlePageNumber] = pages;
     i++;
