@@ -73,16 +73,22 @@ async function fetchAndParseRSSFeed(feedName) {
       if (excludeCategories && item.category.some(c => excludeCategories.includes(c))) return;
       const $ = cheerio.load(item['content:encoded'][0]);
       if (filterContent) $(filterContent).remove();
-      // $('strong').each(function () {
-      //   const strongText = $(this).text();
-      //   $(this).text(`[${strongText}]`);
-      // });
-      // $('em').each(function () {
-      //   const strongText = $(this).text();
-      //   $(this).text(`{${strongText}}`);
-      // });
+      $('strong').each(function () {
+        const strongText = $(this).text();
+//        console.log('strong', strongText);
+        $(this).text('\x03' + strongText.trim().replace(/ /g, '\x03') + '\x07');
+      });
+      $('em').each(function () {
+        const strongText = $(this).text();
+//        console.log('em', strongText);
+        $(this).text('\x06' + strongText.trim().replace(/ /g, '\x06') + '\x07');
+      });
       const plainTextContent = $.text();
-      const cleanedText = plainTextContent.replace(/[\t ]{2,}/g, ' ').replace(/^[\t ]/mg, '').replace(/\n{2,}/g, '\n');
+      let cleanedText = plainTextContent.replace(/\u00A0/g, ' ').replace(/[\t ]{2,}/g, ' ').replace(/^[\t ]/mg, '').replace(/\n{2,}/g, '\n');
+      cleanedText = cleanedText.replace(/([\0-\7])(,|\.|'s)/g, (_,a,b) => b+a);
+      cleanedText = cleanedText.replace(/ ?[\0-\7] ?/g, x => x.trim());
+      cleanedText = cleanedText.replace(/[\7]\n/g, '\n');
+      cleanedText = cleanedText.replace(/[\7]$/g, '');
       result.push({
         title: item.title[0],
         url: item.guid[0]?.startsWith('http') ? item.guid[0] : item.link[0],

@@ -4,6 +4,7 @@ const { exit } = require('process');
 const { charMap, x26CharMap } = require('./unicode');
 const readline = require('readline');
 const { Worker } = require('worker_threads');
+const { qrCreateTeletext } = require('./qrcodetest');
 const rl = readline.createInterface(process.stdin);
 
 function printBufferWithControlCharacters(buffer) {
@@ -112,9 +113,18 @@ const newPage = (options = {}) => {
     buffer: undefined,
   }
 }
+const getLineBuffer = (magazine, y) => {
+  const buf = Buffer.alloc(42, parity[32]);
+  setPacketAddress(buf, 0, magazine, y);
+  return buf;
+}
 const getPageBuffer = (page) => {
   if (!page.clean) {
-    const content = page.lines.filter((b, i) => b && i);
+    const content = [];
+    for (let i = 1; i <= 24; i++) {
+      if (page.lines[i]) content.push(page.lines[i])
+      else if (!page.subtitle && i < 24) content.push(getLineBuffer(page.magazine, i))
+    }
     let y26pos = 13, y26 = undefined, y26lasty, y26idx = 0;
     page.extraChars.forEach((ch, i) => {
       if (ch === undefined) return;
@@ -158,8 +168,7 @@ const getPageBuffer = (page) => {
 };
 const getPageLine = (page, y) => {
   if (!page.lines[y]) {
-    const buf = page.lines[y] = Buffer.alloc(42, parity[32]);
-    setPacketAddress(buf, 0, page.magazine, y);
+    page.lines[y] = getLineBuffer(page.magazine, y);
   }
   return page.lines[y];
 }
@@ -422,6 +431,12 @@ content[199] = [ newPage({ subpage: 1, content: [
   "\x07\x1d\x01 +LOOKALIKE COMPETITION & TOUR BUS   ",
 ]})
 ];
+content[106] = newPage();
+const qr = qrCreateTeletext();
+let qry = 24-qr.length;
+for (const buf of qr) {
+  pagePrintRawAt(content[106], MOSAIC_WHITE + buf.toString(), 40 - buf.length - 1, qry++);
+}
 content[888] = newPage({subtitle:true, magazine:8});
 
 let subs;
@@ -619,7 +634,8 @@ function parseChartData() {
   }
 }
 
-function findLineBreak(line, n = 40) {
+function findLineBreak(line, n = 40, withColors = false) {
+  if (withColors && !(line.trimStart()[0] <= WHITE)) line = ' ' + line;
   const l = line.length;
   if (l <= n) return [line];
   let p;
@@ -627,7 +643,7 @@ function findLineBreak(line, n = 40) {
     if (line[p] === ' ' || line[p] <= WHITE) break;
   }
   const pp = p < n / 2 ? n : p;
-  return [line.substring(0, pp), ...findLineBreak(line.substring(pp).trimStart(), n)];
+  return [line.substring(0, pp), ...findLineBreak(line.substring(pp).trimStart(), n, withColors)];
 }
 
 function makeChartPage() {
@@ -671,20 +687,20 @@ function makeScrapedChartPage({data, title, date, parsedDate}, pageNumber) {
   const subpages = [];
   for (let i = 0; i < data.length; i+=10) {
     const page = newPage({ magazine: pageNumber/100|0, subpage: i/10+1, content: [
-      "   \x13||4| |h||4|||h||4||\x11      `~t       ",
-      "\x14\x1d\x13\x1c\x7f  \x7f|\x7fj}~5\x7f|w j5h}|\x14\x1d   \x11x?!+}0x}0  ",
-      "\x14\x1d\x13\x1c\x7f|4\x7f \x7fj5j5\x7f \x7f j5h|\x7f\x14\x1d \x11`~'   \"o'\"ot ",
-      "\x14//,,,,,,,,,,,,,,,,,,,,,////////////////",
-      "\x03\x1d\x04                               \x01     ",
+      "\x17             |        h4        x\x06     ",
+      "\x04\x1d\x17xl<th4h4x|4|`||  `||j}t`|t`|4n\x7f$x|4  ",
+      "\x04\x1d\x17\x7fj5\x7fj5j5/l4\x7fj5   j5 j5\x7f`<\x7fj5 j\x7f /l4  ",
+      "\x04\x1d\x17/*%/\"//!//!/\"//  \"//*%/*-/*% \"/$//!  ",
+      "\x06\x1d\x04",
       "    Last",
       "    week",
       "","","","","","","","","","","","","","","","",
       "\x01Index    \x02         \x03         \x06",
       ], links: [100, , ,]});
-    pagePrintAtRight(page, (i/10+1).toString()+'/'+Math.ceil(data.length/10), 35, 5, 5);
+    pagePrintAtRight(page, (i/10+1).toString()+'/'+Math.ceil(data.length/10), 35, 1, 5);
     pagePrintAtRight(page, parsedDate || date, 10, 6, 30);
     pagePrintAtCenter(page, title, 3, 5, 32);
-    let y = 9;
+    let y = 8;
     for (let j = 0; j < 10 && i + j < data.length; j++) {
       const n = i+j;
       const artist = CYAN + data[n].artist.replace(/featuring/i, 'Ft.').replace(/ +/g, CYAN);
@@ -713,7 +729,7 @@ function newsPageFromParsedRSS(articles, pageNumber, title) {
     if (line2 && y < 24) pagePrintAtLeft(index, color+line2, 0, y++, 40);
     if (line3 && y < 24) pagePrintAtLeft(index, color+line3, 0, y++, 40);
     color = color === WHITE ? CYAN : WHITE;
-    const paragraphs = text.split('\n').map(x => ' ' + x.trim()).filter(x => x !== ' ').flatMap(x => findLineBreak(x, 39));
+    const paragraphs = text.split('\n').map(x => ' ' + x.trim()).filter(x => x !== ' ').flatMap(x => findLineBreak(x, 40, true));
     let page, yy = 24;
     const pages = [];
     const shortTile = title.length <= 32 ? title : title.substring(0, 29)+'...';
@@ -725,7 +741,7 @@ function newsPageFromParsedRSS(articles, pageNumber, title) {
         pagePrintAtRight(page, CYAN+pages.length.toString()+'/'+Math.ceil(paragraphs.length/22), 35, 1, 5);
         yy = 2;
       }
-      pagePrintAtLeft(page, line, 1, yy++, 39);
+      pagePrintAtLeft(page, line, 0, yy++, 40);
     }
     content[articlePageNumber] = pages;
     i++;
