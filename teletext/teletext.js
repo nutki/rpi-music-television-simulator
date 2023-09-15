@@ -447,6 +447,9 @@ const lastSubpages = [];
 let lastSub;
 let pageQueue = [];
 const header = Buffer.alloc(42, parity[32]);
+let subpageRotationStart = new Date();
+const subpageRotationIntervalMs = 20 * 1000;
+let rotateSubpages = false;
 function init() {
   header.writeUInt8(hamming84[0], 0);
   header.writeUInt8(hamming84[0], 1);
@@ -456,16 +459,25 @@ function init() {
 }
 let rotationIndex = 0;
 async function sendPage() {
-  if (pageQueue.length === 0) { rotationIndex++; pageQueue = Object.keys(content).reverse(); }
+  if (pageQueue.length === 0) {
+    rotationIndex++;
+    pageQueue = Object.keys(content).reverse();
+    rotateSubpages = new Date() - subpageRotationStart > subpageRotationIntervalMs;
+    if (rotateSubpages) subpageRotationStart = new Date();
+  }
   if (pageQueue.length === 0) return;
   const idx = pageQueue.pop();
   let page = content[idx];
   if (page) {
+    let clean = true;
     if (Array.isArray(page)) {
-      const nextSubpage = (lastSubpages[idx] + 1 || 1) < page.length ? (lastSubpages[idx] + 1 || 1) : 0;
+      const inc = rotateSubpages ? 1 : 0;
+      if (rotateSubpages) clean = false;
+      const nextSubpage = (lastSubpages[idx] || 0) + inc < page.length ? (lastSubpages[idx] || 0) + inc : 0;
       page = page[nextSubpage];
       lastSubpages[idx] = nextSubpage;
     }
+    clean = clean && page.clean;
     const n = parseInt(idx, 16);
     if (((n>>8) & 7) !== page.magazine) console.log('magazine mismatch for page ', idx);
     header.writeUInt8(hamming84[page.magazine], 0);
@@ -473,7 +485,7 @@ async function sendPage() {
     header.writeUInt8(hamming84[(n&0xf0)>>4], 3);
     // Subpage + C4-C6
     header.writeUInt8(hamming84[page.subpage%10], 4);
-    header.writeUInt8(hamming84[(page.clean?0:8) + (page.subpage/10|0)], 5); // C4 - erase
+    header.writeUInt8(hamming84[(clean?0:8) + (page.subpage/10|0)], 5); // C4 - erase
     header.writeUInt8(hamming84[0], 6);
     header.writeUInt8(hamming84[page.subtitle?8:0], 7); // C6 - subtitle
     linePrintRawAt(header, `${rotationIndex%10}`, 20);
