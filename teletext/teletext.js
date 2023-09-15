@@ -444,36 +444,27 @@ function formatDuration(d) {
 
 const doubleHeightSubs = true;
 const lastSubpages = [];
-async function main() {
-  const header = Buffer.alloc(42, parity[32]);
+let lastSub;
+let pageQueue = [];
+const header = Buffer.alloc(42, parity[32]);
+function init() {
   header.writeUInt8(hamming84[0], 0);
   header.writeUInt8(hamming84[0], 1);
   header.writeUInt8(hamming84[0], 8); // C7-C10
   header.writeUInt8(hamming84[1], 9); // C11-C14
   linePrintRawAt(header, YELLOW + "MTVText", 11);
-  let lastSub;
-  for (let i = 0;; i++) for (let [idx, page] of Object.entries(content)) {
+}
+let rotationIndex = 0;
+async function sendPage() {
+  if (pageQueue.length === 0) { rotationIndex++; pageQueue = Object.keys(content).reverse(); }
+  if (pageQueue.length === 0) return;
+  const idx = pageQueue.pop();
+  let page = content[idx];
+  if (page) {
     if (Array.isArray(page)) {
       const nextSubpage = (lastSubpages[idx] + 1 || 1) < page.length ? (lastSubpages[idx] + 1 || 1) : 0;
       page = page[nextSubpage];
       lastSubpages[idx] = nextSubpage;
-    }
-    if (idx === "888") {
-      const sub = subs && getSubtitle(subs);
-      if (sub !== lastSub) {
-        lastSub = sub;
-        pageErase(page);
-        if (sub) {
-          let pos = 24 - sub.lines.length*(doubleHeightSubs ? 2 : 1);
-          const prefix = doubleHeightSubs ? DOUBLE_HEIGHT+START_BOX+START_BOX : START_BOX+START_BOX;
-          const suffix = doubleHeightSubs ? END_BOX+END_BOX+' ' : END_BOX+END_BOX;
-          for (const line of sub.lines) {
-            const l = (prefix+line+suffix).substring(0, 40)
-            pagePrintAt(page, l, (40 - l.length)>>1, pos);
-            pos += doubleHeightSubs ? 2 : 1;
-          }
-        }
-      }
     }
     const n = parseInt(idx, 16);
     if (((n>>8) & 7) !== page.magazine) console.log('magazine mismatch for page ', idx);
@@ -485,10 +476,37 @@ async function main() {
     header.writeUInt8(hamming84[(page.clean?0:8) + (page.subpage/10|0)], 5); // C4 - erase
     header.writeUInt8(hamming84[0], 6);
     header.writeUInt8(hamming84[page.subtitle?8:0], 7); // C6 - subtitle
-    linePrintRawAt(header, `${i%10}`, 20);
+    linePrintRawAt(header, `${rotationIndex%10}`, 20);
     headerAddTime(header);
     await sendTeletext([header, getPageBuffer(page)]);
 //    console.log(i, n.toString(16));
+  }
+}
+function updateSubtitles() {
+  const sub = subs && getSubtitle(subs, lastSub);
+  if (sub !== lastSub) {
+    const page = content[888];
+    lastSub = sub;
+    pageQueue.push("888");
+    pageErase(page);
+    if (sub) {
+      let pos = 24 - sub.lines.length*(doubleHeightSubs ? 2 : 1);
+      const prefix = doubleHeightSubs ? DOUBLE_HEIGHT+START_BOX+START_BOX : START_BOX+START_BOX;
+      const suffix = doubleHeightSubs ? END_BOX+END_BOX+' ' : END_BOX+END_BOX;
+      for (const line of sub.lines) {
+        const l = (prefix+line+suffix).substring(0, 40)
+        pagePrintAt(page, l, (40 - l.length)>>1, pos);
+        pos += doubleHeightSubs ? 2 : 1;
+      }
+    }
+  }
+}
+
+async function main() {
+  init();
+  for (;;) {
+    await sendPage();
+    updateSubtitles();
   }
   childProcess.stdin.end();
 }
@@ -516,6 +534,7 @@ function processInput(buf) {
       pagePrintAtLeft(content[100], metaContent.year ? ' Year: '+metaContent.year: '', 0, 21, 11);
       pagePrintAtLeft(content[100], metaContent.album ? ' Album: ' + metaContent.album : '', 0, 22, 40);
       pagePrintAtLeft(content[100], metaContent.director ? ' Directed by: ' + metaContent.director : '', 0, 23, 40);
+      pageQueue.push("100", "101");
     } catch(e) { console.log(e) }
     try {
       const confContent = readFileSync(baseName + '.conf', 'utf8').split('\n').filter(e => e).map((e) => [e[0], e.substring(2)]);
@@ -580,8 +599,9 @@ function setPacketAddress(buf, line, x, y, dc = undefined) {
   if (dc !== undefined) buf.writeUInt8(hamming84[dc], 2 + line * 42)
 }
 
-function getSubtitle(subs) {
+function getSubtitle(subs, last) {
   const time = playerPos;
+  if (last && time >= last.startTimeMs && time <= last.endTimeMs) return last;
   return subs.find(({startTimeMs, endTimeMs}) => time >= startTimeMs && time <= endTimeMs);
 }
 function parseSrt(subtitleText) {
