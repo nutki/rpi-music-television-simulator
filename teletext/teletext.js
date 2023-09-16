@@ -286,9 +286,9 @@ content[100] = newPage({ content: [
 "\x135      \x7fj|\x7f\x14\x7f5\"%\x13\x7fj",
 "\x135      ?j\x7f\x7f\x14\"   \x13?j",
 "\x13-,,,,,,,///,,,,,,,/",
-"\x06NME Music News \x03520  \x07Subtitles    \x03888",
-"\x06Billboard News \x03500  \x07Info overlay \x03101",
-"\x06Ars Technica   \x03540  \x07Gallery      \x03199",
+"\x06NME Music News \x03500  \x07Subtitles    \x03888",
+"\x06Billboard News \x03530  \x07Info overlay \x03101",
+"\x06Ars Technica   \x03560  \x07Gallery      \x03199",
 "\x06               \x03     \x07MTV Top 20   \x03210",
 " ",
 " ",
@@ -582,22 +582,29 @@ function rpcCall(method, ...params) {
 const top20charts = parseChartData();
 makeChartPage();
 setInterval(makeChartPage, 60 * 60 * 1000);
-  // TODO set interval
-rpcCall('rss', 'Billboard').then(r => {
-  newsPageFromParsedRSS(r, 500, 'Billboard Music News');
-});
-rpcCall('rss', 'NME').then(r => {
-  newsPageFromParsedRSS(r, 520, 'NME Music News');
-});
-rpcCall('rss', 'Ars').then(r => {
-  newsPageFromParsedRSS(r, 540, 'Ars Technica News');
-});
-rpcCall('chart', 'uktop40').then(r => {
-  makeScrapedChartPage(r, 212);
-});
-rpcCall('chart', 'billboard100').then(r => {
-  makeScrapedChartPage(r, 213);
-});
+function loadRss() {
+  rpcCall('rss', 'NME').then(r => {
+    newsPageFromParsedRSS(r, 500, 'NME Music News');
+  });
+  rpcCall('rss', 'Billboard').then(r => {
+    newsPageFromParsedRSS(r, 530, 'Billboard Music News');
+  });
+  rpcCall('rss', 'Ars').then(r => {
+    newsPageFromParsedRSS(r, 560, 'Ars Technica News');
+  });
+}
+function loadCharts() {
+  rpcCall('chart', 'uktop40').then(r => {
+    makeScrapedChartPage(r, 212);
+  });
+  rpcCall('chart', 'billboard100').then(r => {
+    makeScrapedChartPage(r, 213);
+  });
+}
+loadRss();
+loadCharts();
+setInterval(loadRss, 15 * 60 * 1000); // 15 minutes
+setInterval(loadCharts, 12 * 60 * 60 * 1000); // 12 hours
 main();
 
 function generateBinaryPacket() {
@@ -719,7 +726,10 @@ function makeChartPage() {
     }
   }
 }
+const prevChartDate = {}
 function makeScrapedChartPage({data, title, date, parsedDate}, pageNumber) {
+  if (prevChartDate[pageNumber] && date && prevChartDate[pageNumber] === date) return;
+  prevChartDate[pageNumber] = date;
   const subpages = [];
   for (let i = 0; i < data.length; i+=10) {
     const page = newPage({ magazine: pageNumber/100|0, subpage: i/10+1, content: [
@@ -768,25 +778,55 @@ function qrCreateTeletext(link) {
   }
   return res;
 }
-module.exports = {
-    qrCreateTeletext
-}
 
-function newsPageFromParsedRSS(articles, pageNumber, title) {
-  const index = content[pageNumber] = newPage({magazine: pageNumber/100|0});
-  let y = 2;
+const currentRss = new Map();
+const currentRssPageMap = new Map();
+const maxArticles = 26;
+const maxIndexPages = 4;
+function newsPageFromParsedRSS(articles, pageNumber, rssTitle) {
+  if (!currentRss.has(pageNumber)) currentRss.set(pageNumber, []);
+  const currentArticles = currentRss.get(pageNumber);
+  while (articles.length) {
+    const article = articles.pop();
+    if (!currentArticles.find(a => a.url === article.url)) {
+      console.log('New article:', rssTitle, article.title);
+      currentArticles.unshift(article);
+      if (currentArticles.length > maxArticles) currentRssPageMap.delete(currentArticles.pop().url);
+    }
+  }
+  const usedPageNumbers = new Set(currentArticles.map(x => currentRssPageMap.get(x.url)));
+  const freePageNumbers = [];
+  for (let i = pageNumber + maxIndexPages; i < pageNumber + maxArticles + maxIndexPages; i++) if (!usedPageNumbers.has(i)) freePageNumbers.push(i);
+  freePageNumbers.reverse();
+  console.log('availiable pages', freePageNumbers);
+
+  let y = 24;
+  let nextIndexPageNumber = pageNumber;
+  let index;
   let color = WHITE;
-  let i = 0;
-  pagePrintAt(index, RED+NEW_BACKGROUND+BLACK, 0, 1);
-  pagePrintAtCenter(index, title, 3, 1, 35);
-  for (const { title, text, url } of articles) {
-    // TODO find stable number when refetching rss
-    const articlePageNumber = pageNumber + i + 1;
-    const [line1, line2, line3] = findLineBreak(articlePageNumber.toString() + color + title, 39);
-    pagePrintAtLeft(index, YELLOW+line1, 0, y++, 40);
-    if (line2 && y < 24) pagePrintAtLeft(index, color+line2, 0, y++, 40);
-    if (line3 && y < 24) pagePrintAtLeft(index, color+line3, 0, y++, 40);
+  for (const { title, text, url } of currentArticles) {
+    let articlePageNumber = currentRssPageMap.get(url);
+    if (!articlePageNumber) articlePageNumber = freePageNumbers.pop();
+    const lines = findLineBreak(articlePageNumber.toString() + color + title, 39).slice(0, 3);
+    if (y + lines.length > 24) {
+      if (nextIndexPageNumber < pageNumber + maxIndexPages) {
+        y = 2;
+        index = content[nextIndexPageNumber] = newPage({magazine: nextIndexPageNumber/100|0});
+        pagePrintAt(index, RED+NEW_BACKGROUND+BLACK, 0, 1);
+        pagePrintAtCenter(index, rssTitle, 3, 1, 35);
+        nextIndexPageNumber++;
+      } else {
+        index = undefined;
+      }
+    }
+    if (index) {
+      pagePrintAtLeft(index, YELLOW+lines[0], 0, y++, 40);
+      if (lines[1]) pagePrintAtLeft(index, color+lines[1], 0, y++, 40);
+      if (lines[2]) pagePrintAtLeft(index, color+lines[2], 0, y++, 40);
+    }
     color = color === WHITE ? CYAN : WHITE;
+    if (currentRssPageMap.has(url)) continue;
+    currentRssPageMap.set(url, articlePageNumber);
     const rawParagraphs = text.split('\n').map(x => ' ' + x.trim()).filter(x => x !== ' ');
     const lastPageStart = Math.floor((findLineBreak(rawParagraphs, 40, true).length-1)/22)*22;
     const qr = qrCreateTeletext(url);
@@ -812,6 +852,8 @@ function newsPageFromParsedRSS(articles, pageNumber, title) {
       pagePrintAt(page, line, 0, yy++);
     }
     content[articlePageNumber] = pages;
-    i++;
+  }
+  for (let i = nextIndexPageNumber; i < pageNumber + maxIndexPages; i++) if (content[i]) {
+    content[i] = newPage({magazine: i/100|0});
   }
 }
