@@ -290,16 +290,16 @@ content[100] = newPage({ content: [
 "\x06Billboard News \x03530  \x07Info overlay \x03101",
 "\x06Ars Technica   \x03560  \x07Gallery      \x03199",
 "\x06               \x03     \x07MTV Top 20   \x03210",
-" ",
-" ",
+"\x06               \x03     \x07Billboard 100\x03212",
+"\x06               \x03     \x07UK Singles 40\x03213",
 " Now playing:",
 " ",
 " ",
 " ",
 " ",
 " ",
-"\x01MTV Today\x02UK Today \x03Charts   \x06Subtitles",
-], links: [100,102,210,888]});
+"\x01MusicNews\x02Overlay  \x03Charts   \x06Subtitles",
+], links: [500,101,210,888]});
 content[101] = newPage({ subtitle: true });
 
 content[199] = [ newPage({ subpage: 1, content: [
@@ -538,9 +538,7 @@ function processInput(buf) {
       pagePrintAtCenter(content[101], YELLOW+START_BOX+START_BOX+metaContent.artist+END_BOX+END_BOX, 0, 1, 40);
       pagePrintAtCenter(content[101], GREEN+START_BOX+START_BOX+metaContent.name+END_BOX+END_BOX, 0, 2, 40);
       if (metaContent.year)
-        pagePrintAtLeft(content[101], WHITE+START_BOX+START_BOX+metaContent.year+END_BOX+END_BOX, 0, 3, 4);
-      if (metaContent.director)
-        pagePrintAt(content[101], WHITE+START_BOX+START_BOX+'Directed by: ' + metaContent.director+END_BOX+END_BOX, 0, 4);
+        pagePrintAtLeft(content[101], WHITE+START_BOX+metaContent.year, 40-6, 1, 6);
       pagePrintAtLeft(content[100], GREEN+metaContent.name, 0, 19, 40);
       pagePrintAtRight(content[100], YELLOW+metaContent.artist, 0, 20, 40);
       pagePrintAtLeft(content[100], metaContent.year ? ' Year: '+metaContent.year: '', 0, 21, 11);
@@ -558,7 +556,8 @@ function processInput(buf) {
   } else if (buf[0] === 'D') {
     playerDuration = parseInt(buf.substring(1));
     const playerCroppedDuration = (cropPosEnd >= 0 ? cropPosEnd : playerDuration) - cropPosStart;
-    pagePrintAtRight(content[101], START_BOX+formatDuration(playerCroppedDuration), 40-7, 3, 7);
+    const displayDuration = formatDuration(playerCroppedDuration) + (playerCroppedDuration === playerDuration ? '' : '/' + formatDuration(playerDuration));
+    pagePrintAtRight(content[101], START_BOX+displayDuration, 40-7, 3, 7);
   } else {
     console.log('Unknown player command: ', buf);
   }
