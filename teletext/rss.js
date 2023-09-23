@@ -75,22 +75,22 @@ async function fetchAndParseRSSFeed(feedName) {
       if (filterContent) $(filterContent).remove();
       $('strong').each(function () {
         const strongText = $(this).text();
-        $(this).text('\x03' + strongText.trim().replace(/ /g, '\x03') + '\x07');
+        $(this).text('\x03' + strongText.trim().replace(/[\u00A0 ]/g, '\x03') + '\x07');
       });
       $('em').each(function () {
         const emText = $(this).text();
-        $(this).text('\x06' + emText.trim().replace(/ /g, '\x06') + '\x07');
+        $(this).text('\x06' + emText.trim().replace(/[\u00A0 ]/g, '\x06') + '\x07');
       });
       $('a').each(function () {
         const anchorText = $(this).text();
-        $(this).text('\x02' + anchorText.trim().replace(/ /g, '\x02') + '\x07');
+        $(this).text('\x02' + anchorText.trim().replace(/[\u00A0 ]/g, '\x02') + '\x07');
       });
       const plainTextContent = $.text();
-      let cleanedText = plainTextContent.replace(/\u00A0/g, ' ').replace(/[\t ]{2,}/g, ' ').replace(/^[\t ]/mg, '').replace(/\n{2,}/g, '\n');
-      cleanedText = cleanedText.replace(/([\0-\7])(,|\.|'s)/g, (_,a,b) => b+a);
+      let cleanedText = plainTextContent.replace(/[\u00A0\t]/g, ' ').replace(/ {2,}/g, ' ').replace(/^ /mg, '').replace(/\n{2,}/g, '\n');
+      cleanedText = cleanedText.replace(/([\0-\7])([?!,.”’]|['’]s)/g, (_,a,b) => b+a);
+      cleanedText = cleanedText.replace(/([“‘])([\0-\7])/g, (_,a,b) => b+a);
       cleanedText = cleanedText.replace(/ ?[\0-\7] ?/g, x => x.trim());
-      cleanedText = cleanedText.replace(/[\7]\n/g, '\n');
-      cleanedText = cleanedText.replace(/[\7]$/g, '');
+      cleanedText = cleanedText.replace(/[\0-\7]+([\0-\7]|\n|$)/mg, (_,v) => v);
       result.push({
         title: item.title[0],
         url: item.guid[0]?.startsWith('http') ? item.guid[0] : item.link[0],
