@@ -556,8 +556,9 @@ function processInput(buf) {
   } else if (buf[0] === 'D') {
     playerDuration = parseInt(buf.substring(1));
     const playerCroppedDuration = (cropPosEnd >= 0 ? cropPosEnd : playerDuration) - cropPosStart;
-    const displayDuration = formatDuration(playerCroppedDuration) + (playerCroppedDuration === playerDuration ? '' : '/' + formatDuration(playerDuration));
+    const displayDuration = formatDuration(playerCroppedDuration) + (playerCroppedDuration === playerDuration ? '' : '(' + formatDuration(playerDuration) + ')');
     pagePrintAtRight(content[101], START_BOX+displayDuration, 40-7, 3, 7);
+    pageQueue.push("101");
   } else {
     console.log('Unknown player command: ', buf);
   }
