@@ -20,7 +20,7 @@ const chartParams = {
     positionSelector: 'ul.o-chart-results-list-row>li:nth-child(1) .c-label:nth-child(1)',
     titleSelector: 'li:nth-child(4) li:nth-child(1) .c-title',
     artistSelector: 'li:nth-child(4) li:nth-child(1) .c-label',
-    lastWeekSelector: 'li:nth-child(4)>ul>li:nth-child(4) .c-label',
+    lastWeekSelector: 'li:nth-child(4)>ul>div>div:nth-child(1) .c-label',
     dateSelector: '.a-heading-border + p.c-tagline',
   },
 }
