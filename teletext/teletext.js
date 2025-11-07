@@ -468,7 +468,7 @@ async function sendPage() {
   if (pageQueue.length === 0) return;
   const idx = pageQueue.pop();
   let page = content[idx];
-  if (page) {
+  if (page && (!Array.isArray(page) || page.length)) {
     let clean = true;
     if (Array.isArray(page)) {
       const inc = rotateSubpages ? 1 : 0;
@@ -538,7 +538,7 @@ function processInput(buf) {
       pagePrintAtCenter(content[101], YELLOW+START_BOX+START_BOX+metaContent.artist+END_BOX+END_BOX, 0, 1, 40);
       pagePrintAtCenter(content[101], GREEN+START_BOX+START_BOX+metaContent.name+END_BOX+END_BOX, 0, 2, 40);
       if (metaContent.year)
-        pagePrintAtLeft(content[101], WHITE+START_BOX+metaContent.year, 40-6, 1, 6);
+        pagePrintAtLeft(content[101], WHITE+START_BOX+START_BOX+metaContent.year+END_BOX, 40-8, 1, 8);
       pagePrintAtLeft(content[100], GREEN+metaContent.name, 0, 19, 40);
       pagePrintAtRight(content[100], YELLOW+metaContent.artist, 0, 20, 40);
       pagePrintAtLeft(content[100], metaContent.year ? ' Year: '+metaContent.year: '', 0, 21, 11);
@@ -547,7 +547,7 @@ function processInput(buf) {
       pageQueue.push("100", "101");
     } catch(e) { console.log(e) }
     try {
-      const confContent = readFileSync(baseName + '.conf', 'utf8').split('\n').filter(e => e).map((e) => [e[0], e.substring(2)]);
+      const confContent = Object.fromEntries(readFileSync(baseName + '.conf', 'utf8').split('\n').filter(e => e).map((e) => [e[0], e.substring(2)]));
       cropPosStart = confContent.S ? parseInt(confContent.S) : 0;
       cropPosEnd = confContent.E ? parseInt(confContent.E) : -1;
     } catch(e) {}
@@ -557,7 +557,7 @@ function processInput(buf) {
     playerDuration = parseInt(buf.substring(1));
     const playerCroppedDuration = (cropPosEnd >= 0 ? cropPosEnd : playerDuration) - cropPosStart;
     const displayDuration = formatDuration(playerCroppedDuration) + (playerCroppedDuration === playerDuration ? '' : '(' + formatDuration(playerDuration) + ')');
-    pagePrintAtRight(content[101], START_BOX+displayDuration, 40-7, 3, 7);
+    pagePrintAtRight(content[101], START_BOX+START_BOX+displayDuration+END_BOX, 40-20, 3, 20);
     pageQueue.push("101");
   } else {
     console.log('Unknown player command: ', buf);

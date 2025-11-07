@@ -21,7 +21,6 @@ NME: {
 Ars: {
   rssFeedURL: 'https://feeds.arstechnica.com/arstechnica/index/',
   excludeCategories: ['Elon Musk'],
-  filterContent: '.intro-image,p:not(div#rss-wrap p)',
 },
 };
 
