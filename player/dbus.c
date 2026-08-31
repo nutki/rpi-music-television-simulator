@@ -1,3 +1,141 @@
+#ifdef USE_LIBVLC
+
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdint.h>
+#include <math.h>
+#include <vlc/vlc.h>
+#include "dbus.h"
+
+static libvlc_instance_t *vlc_instance;
+static libvlc_media_player_t *vlc_player;
+
+static void libvlc_ensure(void) {
+   if (!vlc_instance) {
+      const char *vlc_argv[] = { "--intf=none", "--no-video-title-show" };
+      vlc_instance = libvlc_new(2, vlc_argv);
+   }
+   if (!vlc_player && vlc_instance) {
+      vlc_player = libvlc_media_player_new(vlc_instance);
+   }
+}
+
+int libvlc_open_file(const char *path, int64_t start_us) {
+   if (!path) return -1;
+   libvlc_ensure();
+   if (!vlc_player) return -1;
+   libvlc_media_t *media = libvlc_media_new_path(vlc_instance, path);
+   if (!media) return -1;
+   if (start_us > 0) {
+      char start_time[1024];
+      snprintf(start_time, sizeof(start_time), ":start-time=%lld", start_us / 1000000LL);
+      libvlc_media_add_option(media, start_time);
+   }
+   libvlc_media_player_set_media(vlc_player, media);
+   libvlc_media_release(media);
+   // if (start_us > 0) {
+   //    printf("set time %ld\n", start_ms);
+   //    libvlc_media_player_set_time(vlc_player, (libvlc_time_t)(start_ms / 1000LL));
+   // }
+   libvlc_media_player_play(vlc_player);
+   return 0;
+}
+
+int libvlc_player_has_ended(void) {
+   if (!vlc_player) return 1;
+   libvlc_state_t state = libvlc_media_player_get_state(vlc_player);
+   return state == libvlc_Ended || state == libvlc_Stopped;
+}
+
+static int64_t libvlc_query(const char *property) {
+   if (!vlc_player) return -1;
+   if (!strcmp(property, "Duration")) {
+      return libvlc_media_player_get_length(vlc_player) * 1000LL;
+   }
+   if (!strcmp(property, "Position")) {
+      return libvlc_media_player_get_time(vlc_player) * 1000LL;
+   }
+   if (!strcmp(property, "ResWidth")) {
+      return libvlc_video_get_width(vlc_player);
+   }
+   if (!strcmp(property, "ResHeight")) {
+      return libvlc_video_get_height(vlc_player);
+   }
+   return -1;
+}
+
+void dbus_init(void) {
+   libvlc_ensure();
+}
+
+int64_t query(char *param) {
+   return libvlc_query(param);
+}
+
+int64_t dbus_action(char *action_name) {
+   libvlc_ensure();
+   if (!vlc_player) return -1;
+   if (!strcmp(action_name, "Stop")) {
+      libvlc_media_player_stop(vlc_player);
+      return 0;
+   }
+   if (!strcmp(action_name, "PlayPause")) {
+      libvlc_state_t state = libvlc_media_player_get_state(vlc_player);
+      if (state == libvlc_Playing) libvlc_media_player_pause(vlc_player);
+      else if (state != libvlc_Ended && state != libvlc_Error) libvlc_media_player_play(vlc_player);
+      return 0;
+   }
+   if (!strcmp(action_name, "ShowSubtitles")) return 0;
+   if (!strcmp(action_name, "HideSubtitles")) return 0;
+   return -1;
+}
+
+int dbus_quit(void) { return (int)dbus_action("Stop"); }
+
+int64_t dbus_seek(int64_t seek) {
+   if (!vlc_player) return -1;
+   libvlc_time_t c = libvlc_media_player_get_time(vlc_player) + (libvlc_time_t)(seek / 1000LL);
+   if (c < 0) c = 0;
+   libvlc_media_player_set_time(vlc_player, c);
+   return libvlc_query("Position");
+}
+
+static int libvlc_volume_from_correction(int volume_correction) {
+   double linear = 100.0 * pow(10.0, (double)volume_correction / 2000.0);
+   if (linear < 0.0) return 0;
+   return (int)lround(linear);
+}
+
+int64_t dbus_volume(int64_t vol) {
+   if (!vlc_player) return -1;
+   int v = libvlc_volume_from_correction((int)vol);
+   int res = libvlc_audio_set_volume(vlc_player, v);
+   printf("Corrected volume: %lld = %d result is %d\n", vol, v, res);
+   return v;
+}
+
+int64_t dbus_crop(int x, int y, int w, int h) {
+   char geom[64];
+   if (!vlc_player) return -1;
+   if (x < 0 || y < 0 || w <= x || h <= y) {
+      libvlc_video_set_crop_geometry(vlc_player, NULL);
+      return 0;
+   }
+   snprintf(geom, sizeof(geom), "%d,%d,%d,%d", x, y, w - x, h - y);
+   printf("Setting crop geometry: %s\n", geom);
+   libvlc_video_set_crop_geometry(vlc_player, geom);
+   return 0;
+}
+
+int64_t dbus_aspect_mode(const char *mode) {
+   if (!vlc_player) return -1;
+   libvlc_video_set_aspect_ratio(vlc_player, mode && !strcmp(mode, "fill") ? "16:9" : "4:3");
+   return 0;
+}
+
+#else
+
 #include <dbus/dbus.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -519,3 +657,4 @@ int64_t dbus_aspect_mode(const char *mode)
    dbus_message_unref(msg);
    return val;
 }
+#endif

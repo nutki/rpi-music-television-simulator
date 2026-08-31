@@ -1,3 +1,28 @@
+#if defined(USE_LIBVLC)
+
+#include <stddef.h>
+
+int teletext_init(void) {
+    return 0;
+}
+
+void teletext_close(void) {
+}
+
+void teletext_set_video_filename(char *fname) {
+    (void)fname;
+}
+
+void teletext_set_video_position(int pos) {
+    (void)pos;
+}
+
+void teletext_set_video_duration(int d) {
+    (void)d;
+}
+
+#else
+
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -47,3 +72,5 @@ void teletext_set_video_duration(int d) {
     fwrite(buf, strlen(buf), 1, f);
     fflush(f);
 }
+
+#endif

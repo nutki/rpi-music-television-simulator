@@ -1,12 +1,17 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdbool.h>
 #include <ctype.h>
 #include <string.h>
 
+#if defined(USE_LIBVLC)
+#include <vlc/vlc.h>
+#else
 #include <bcm_host.h>
 #include "image.h"
+#endif
 #include "dbus.h"
 #include "dispmanx.h"
 #include "terminput.h"
@@ -63,6 +68,24 @@ int video_end_pos = -1;
 bool video_end_was_set = false;
 int volume_correction = 0;
 int start_player(char *f, int start) {
+#if defined(USE_LIBVLC)
+  dbus_init();
+  if (f && libvlc_open_file(f, start) == 0) {
+    if (volume_correction != 0) dbus_volume(volume_correction);
+    if (crop_x >= 0 && crop_y >= 0 && crop_w >= 0 && crop_h >= 0) {
+      dbus_crop(crop_x, crop_y, crop_w + crop_x, crop_h + crop_y);
+    } else {
+      dbus_crop(-1, -1, -1, -1);
+    }
+    cpid = 1;
+  } else {
+    cpid = 0;
+    state = PLAYER_STOPPED;
+    return -1;
+  }
+  state = PLAYER_STARTING;
+  return 0;
+#else
   char start_param[32], crop_param[128], volume_param[32];
   start /= 1000000;
   sprintf(start_param, "-l%02d:%02d:%02d", start/3600, start/60%60, start%60);
@@ -105,9 +128,19 @@ int start_player(char *f, int start) {
   }
   state = PLAYER_STARTING;
   return 0;
+#endif
 }
 int64_t last_reported_position = -1;
 int check_ifstopped() {
+#if defined(USE_LIBVLC)
+  if (cpid <= 0) return 0;
+  if (libvlc_player_has_ended()) {
+    state = PLAYER_STOPPED;
+    cpid = 0;
+    printf("Playback stoped at %.3f of %.3f\n", last_reported_position/1000000., duration/1000000.);
+  }
+  return 0;
+#else
   int status;
   if (cpid <= 0) return 0;
   pid_t w = waitpid(cpid, &status, WNOHANG);
@@ -125,6 +158,7 @@ int check_ifstopped() {
     printf("Playback stoped at %.3f of %.3f\n", last_reported_position/1000000., duration/1000000.);
   }
   return 0;
+#endif
 }
 
 #define STRAP_DURATION_SEC 7
@@ -710,6 +744,7 @@ int main(int argc, char *argv[]) {
   struct channel_entry *ce = channel_current_entry();
   read_video_conf(ce->path);
   for(int64_t frame = 0;; frame++) {
+    // printf("%d %10.3f/%10.3f\n", state, current_position / 1000000., duration / 1000000.);
     osd_update();
     if (state != PLAYER_STOPPED) check_ifstopped();
     switch (state) {

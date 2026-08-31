@@ -1,3 +1,42 @@
+#if defined(USE_LIBVLC)
+
+#include <stddef.h>
+
+void load_strap(char *path) {
+    (void)path;
+}
+
+void dispmanx_init(void) {
+}
+
+void dispmanx_alpha(int a) {
+    (void)a;
+}
+
+void blank_background(void) {
+}
+
+void dispmanx_close(void) {
+}
+
+void osd_text(const char *c, int align) {
+    (void)c;
+    (void)align;
+}
+
+void osd_text_clear(void) {
+}
+
+void bg_mode(int mode) {
+    (void)mode;
+}
+
+char *dispmanx_shifted_window(void) {
+    return NULL;
+}
+
+#else
+
 #include <stdio.h>
 #include <assert.h>
 #include <stdbool.h>
@@ -257,3 +296,5 @@ void dispmanx_close() {
 	assert(result == 0);
         }
 }
+
+#endif

@@ -29,7 +29,9 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
+#ifndef USE_LIBVLC
 #include "bcm_host.h"
+#endif
 #include "image.h"
 
 //-------------------------------------------------------------------------
