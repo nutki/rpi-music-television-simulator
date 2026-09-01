@@ -11,6 +11,93 @@
 static libvlc_instance_t *vlc_instance;
 static libvlc_media_player_t *vlc_player;
 
+struct libvlc_frame_log {
+   unsigned width;
+   unsigned height;
+   unsigned pitch;
+   unsigned lines;
+   unsigned bytes;
+   unsigned char *buffer;
+};
+
+static struct libvlc_frame_log libvlc_frame_log = { 0 };
+
+static void libvlc_log_cleanup(void *opaque) {
+   struct libvlc_frame_log *frame = opaque;
+   if (!frame) return;
+   free(frame->buffer);
+   frame->buffer = NULL;
+   frame->width = 0;
+   frame->height = 0;
+   frame->pitch = 0;
+   frame->lines = 0;
+   frame->bytes = 0;
+   printf("libvlc: cleanup callback\n");
+}
+
+static unsigned libvlc_log_format(void **opaque, char *chroma,
+                                  unsigned *width, unsigned *height,
+                                  unsigned *pitches, unsigned *lines) {
+   struct libvlc_frame_log *frame = opaque ? *opaque : &libvlc_frame_log;
+   if (!frame) frame = &libvlc_frame_log;
+
+   printf("libvlc: format callback: chroma=%4.4s width=%u height=%u\n",
+          chroma ? chroma : "????", width ? *width : 0, height ? *height : 0);
+
+   if (!width || !height || !pitches || !lines) {
+      return 1;
+   }
+
+   unsigned bpp = 4;
+   if (chroma && (!strncmp(chroma, "YUYV", 4) || !strncmp(chroma, "UYVY", 4) ||
+       !strncmp(chroma, "YV12", 4) || !strncmp(chroma, "I420", 4))) {
+      bpp = 2;
+   }
+
+   frame->width = *width;
+   frame->height = *height;
+   frame->pitch = *width * bpp;
+   frame->lines = *height;
+   frame->bytes = frame->pitch * frame->lines;
+
+   free(frame->buffer);
+   frame->buffer = calloc(1, frame->bytes > 0 ? frame->bytes : 1);
+   if (!frame->buffer) {
+      fprintf(stderr, "libvlc: frame buffer alloc failed\n");
+      return 0;
+   }
+
+   pitches[0] = frame->pitch;
+   lines[0] = frame->lines;
+   if (opaque) *opaque = frame;
+   printf("libvlc: format callback prepared %ux%u pitch=%u bytes=%u\n",
+          frame->width, frame->height, frame->pitch, frame->bytes);
+   return 1;
+}
+
+static void *libvlc_log_lock(void *opaque, void **planes) {
+   struct libvlc_frame_log *frame = opaque;
+//   printf("libvlc: lock callback: opaque=%p\n", opaque);
+   if (!frame) return NULL;
+   if (!frame->buffer && frame->bytes > 0) {
+      frame->buffer = calloc(1, frame->bytes);
+   }
+   if (!planes) return frame;
+   for (int i = 0; i < 4; ++i) planes[i] = NULL;
+   planes[0] = frame->buffer;
+   return frame;
+}
+
+static void libvlc_log_unlock(void *opaque, void *picture, void *const *planes) {
+   (void)picture;
+   // printf("libvlc: unlock callback: opaque=%p planes0=%p\n", opaque,
+   //        planes ? planes[0] : NULL);
+}
+
+static void libvlc_log_display(void *opaque, void *picture) {
+   // printf("libvlc: display callback: opaque=%p picture=%p\n", opaque, picture);
+}
+
 static void libvlc_ensure(void) {
    if (!vlc_instance) {
       const char *vlc_argv[] = { "--intf=none", "--no-video-title-show" };
@@ -18,6 +105,11 @@ static void libvlc_ensure(void) {
    }
    if (!vlc_player && vlc_instance) {
       vlc_player = libvlc_media_player_new(vlc_instance);
+      libvlc_video_set_callbacks(vlc_player, libvlc_log_lock,
+                                 libvlc_log_unlock, libvlc_log_display,
+                                 &libvlc_frame_log);
+      libvlc_video_set_format_callbacks(vlc_player, libvlc_log_format,
+                                        libvlc_log_cleanup);
    }
 }
 
