@@ -113,12 +113,20 @@ static void libvlc_ensure(void) {
    }
 }
 
-int libvlc_open_file(const char *path, int64_t start_us) {
+static int libvlc_volume_from_correction(int volume_correction) {
+   double linear = 100.0 * pow(10.0, (double)volume_correction / 2000.0);
+   if (linear < 0.0) return 0;
+   return (int)lround(linear);
+}
+
+int libvlc_open_file(const char *path, int64_t start_us, int volume_correction) {
    if (!path) return -1;
    libvlc_ensure();
    if (!vlc_player) return -1;
    libvlc_media_t *media = libvlc_media_new_path(vlc_instance, path);
    if (!media) return -1;
+   int vol = libvlc_volume_from_correction(volume_correction);
+   snprintf(start_time, sizeof(start_time), ":volume=%lld", vol);
    if (start_us > 0) {
       char start_time[1024];
       snprintf(start_time, sizeof(start_time), ":start-time=%lld", start_us / 1000000LL);
@@ -191,12 +199,6 @@ int64_t dbus_seek(int64_t seek) {
    if (c < 0) c = 0;
    libvlc_media_player_set_time(vlc_player, c);
    return libvlc_query("Position");
-}
-
-static int libvlc_volume_from_correction(int volume_correction) {
-   double linear = 100.0 * pow(10.0, (double)volume_correction / 2000.0);
-   if (linear < 0.0) return 0;
-   return (int)lround(linear);
 }
 
 int64_t dbus_volume(int64_t vol) {

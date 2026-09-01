@@ -70,7 +70,7 @@ int volume_correction = 0;
 int start_player(char *f, int start) {
 #if defined(USE_LIBVLC)
   dbus_init();
-  if (f && libvlc_open_file(f, start) == 0) {
+  if (f && libvlc_open_file(f, start, volume_correction) == 0) {
     if (volume_correction != 0) dbus_volume(volume_correction);
     if (crop_x >= 0 && crop_y >= 0 && crop_w >= 0 && crop_h >= 0) {
       dbus_crop(crop_x, crop_y, crop_w + crop_x, crop_h + crop_y);
