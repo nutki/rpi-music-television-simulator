@@ -1,12 +1,210 @@
 #if defined(USE_LIBVLC)
 
 #include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/mman.h>
+#include <sys/ioctl.h>
+
+#include <xf86drm.h>
+#include <xf86drmMode.h>
+#include <drm_fourcc.h>
+
+struct drm_vec_plane {
+    int fd;
+    uint32_t plane_id;
+    uint32_t crtc_id;
+    uint32_t connector_id;
+    uint32_t possible_crtcs;
+    int width;
+    int height;
+};
+
+static struct drm_vec_plane drm_vec_plane = {
+    .fd = -1,
+    .plane_id = 0,
+    .crtc_id = 0,
+    .connector_id = 0,
+    .possible_crtcs = 0,
+    .width = 0,
+    .height = 0,
+};
+
+static int drm_vec_plane_set_colorbar(void) {
+    if (drm_vec_plane.fd < 0 || drm_vec_plane.plane_id == 0) {
+        return -1;
+    }
+
+    uint32_t width = 720;
+    uint32_t height = 576;
+    uint32_t pitch = width * 4;
+    uint32_t size = pitch * height;
+
+    struct drm_mode_create_dumb create = {0};
+    create.width = width;
+    create.height = height;
+    create.bpp = 32;
+    create.flags = 0;
+    if (drmIoctl(drm_vec_plane.fd, DRM_IOCTL_MODE_CREATE_DUMB, &create) != 0) {
+        fprintf(stderr, "drm-rp1-vec: DRM_IOCTL_MODE_CREATE_DUMB failed\n");
+        return -1;
+    }
+
+    struct drm_mode_map_dumb map = {0};
+    map.handle = create.handle;
+    if (drmIoctl(drm_vec_plane.fd, DRM_IOCTL_MODE_MAP_DUMB, &map) != 0) {
+        fprintf(stderr, "drm-rp1-vec: DRM_IOCTL_MODE_MAP_DUMB failed\n");
+        struct drm_mode_destroy_dumb destroy = {
+            .handle = create.handle,
+        };
+
+        drmIoctl(drm_vec_plane.fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
+        return -1;
+    }
+
+    uint8_t *pixels = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED,
+                          drm_vec_plane.fd, map.offset);
+    if (pixels == MAP_FAILED) {
+        fprintf(stderr, "drm-rp1-vec: mmap failed: %s\n", strerror(errno));
+        return -1;
+    }
+
+    for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+            uint8_t r, g, b;
+            int bar = (x * 8) / width;
+            switch (bar) {
+                case 0: r = 255; g = 0;   b = 0;   break;
+                case 1: r = 255; g = 255; b = 0;   break;
+                case 2: r = 0;   g = 255; b = 0;   break;
+                case 3: r = 0;   g = 255; b = 255; break;
+                case 4: r = 0;   g = 0;   b = 255; break;
+                case 5: r = 255; g = 0;   b = 255; break;
+                case 6: r = 255; g = 255; b = 255; break;
+                default: r = 64;  g = 64;  b = 64;  break;
+            }
+            uint32_t *pixel = (uint32_t *)(pixels + (y * pitch) + (x * 4));
+            *pixel = (0xffu << 24) | (r << 16) | (g << 8) | b;
+        }
+    }
+
+    uint32_t fb_id = 0;
+    int ret = drmModeAddFB(drm_vec_plane.fd, width, height, 24, 32,
+                           pitch, create.handle, &fb_id);
+    if (ret != 0) {
+        fprintf(stderr, "drm-rp1-vec: drmModeAddFB failed: %d\n", ret);
+        munmap(pixels, size);
+        return -1;
+    }
+
+    ret = drmModeSetPlane(drm_vec_plane.fd, drm_vec_plane.plane_id,
+                          drm_vec_plane.crtc_id, fb_id, 0,
+                          0, 0, width, height,
+                          0, 0, width << 16, height << 16);
+    if (ret != 0) {
+        fprintf(stderr, "drm-rp1-vec: drmModeSetPlane failed: %d\n", ret);
+        drmModeRmFB(drm_vec_plane.fd, fb_id);
+        munmap(pixels, size);
+        return -1;
+    }
+
+    printf("drm-rp1-vec: colorbar plane set fb=%u w=%u h=%u\n", fb_id, width, height);
+    munmap(pixels, size);
+    return 0;
+}
+
+static int drm_vec_plane_acquire(void) {
+    if (drm_vec_plane.fd >= 0) {
+        return 0;
+    }
+
+    const char *device = "/dev/dri/card0";
+    int fd = open(device, O_RDWR | O_CLOEXEC);
+    if (fd < 0) {
+        fprintf(stderr, "drm-rp1-vec: failed to open %s: %s\n", device, strerror(errno));
+        return -1;
+    }
+// Enable universal planes to expose primary and cursor planes
+if (drmSetClientCap(fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1) < 0) {
+    fprintf(stderr, "drm-rp1-vec: failed to set universal planes capability\n");
+    close(fd);
+    return -1;
+}
+    drmModeResPtr resources = drmModeGetResources(fd);
+    if (!resources) {
+        fprintf(stderr, "drm-rp1-vec: drmModeGetResources failed on %s\n", device);
+        close(fd);
+        return -1;
+    }
+
+    drmModePlaneResPtr planes = drmModeGetPlaneResources(fd);
+    if (!planes || planes->count_planes == 0) {
+        fprintf(stderr, "drm-rp1-vec: no planes reported for %s %p %d\n", device, planes, planes->count_planes);
+        drmModeFreeResources(resources);
+        close(fd);
+        return -1;
+    }
+
+    uint32_t plane_id = 0;
+    drmModePlanePtr plane = NULL;
+    for (int i = 0; i < planes->count_planes; ++i) {
+        plane = drmModeGetPlane(fd, planes->planes[i]);
+        if (!plane) {
+            continue;
+        }
+
+        if (plane->possible_crtcs == 0 || plane->count_formats == 0) {
+            drmModeFreePlane(plane);
+            plane = NULL;
+            continue;
+        }
+
+        plane_id = plane->plane_id;
+        printf("drm-rp1-vec: plane candidate id=%u crtc=%u possible_crtcs=0x%x formats=%u\n",
+               plane_id, plane->crtc_id, plane->possible_crtcs, plane->count_formats);
+        break;
+    }
+
+    if (!plane) {
+        fprintf(stderr, "drm-rp1-vec: no usable graphic plane found\n");
+        drmModeFreePlaneResources(planes);
+        drmModeFreeResources(resources);
+        close(fd);
+        return -1;
+    }
+
+    drm_vec_plane.fd = fd;
+    drm_vec_plane.plane_id = plane_id;
+    drm_vec_plane.crtc_id = plane->crtc_id;
+    drm_vec_plane.connector_id = resources->connectors[0];
+    drm_vec_plane.possible_crtcs = plane->possible_crtcs;
+    drm_vec_plane.width = 1920;
+    drm_vec_plane.height = 1080;
+
+    printf("drm-rp1-vec: acquired plane id=%u crtc=%u connector=%u possible_crtcs=0x%x\n",
+           drm_vec_plane.plane_id,
+           drm_vec_plane.crtc_id,
+           drm_vec_plane.connector_id,
+           drm_vec_plane.possible_crtcs);
+
+    drmModeFreePlane(plane);
+    drmModeFreePlaneResources(planes);
+    drmModeFreeResources(resources);
+    return 0;
+}
 
 void load_strap(char *path) {
     (void)path;
 }
 
 void dispmanx_init(void) {
+    drm_vec_plane_acquire();
+    drm_vec_plane_set_colorbar();
 }
 
 void dispmanx_alpha(int a) {
@@ -17,6 +215,14 @@ void blank_background(void) {
 }
 
 void dispmanx_close(void) {
+    if (drm_vec_plane.fd >= 0) {
+        close(drm_vec_plane.fd);
+        drm_vec_plane.fd = -1;
+        drm_vec_plane.plane_id = 0;
+        drm_vec_plane.crtc_id = 0;
+        drm_vec_plane.connector_id = 0;
+        drm_vec_plane.possible_crtcs = 0;
+    }
 }
 
 void osd_text(const char *c, int align) {

@@ -7,8 +7,8 @@ find_library(LIB_BCM_HOST bcm_host PATHS /opt/vc/lib)
 if (LIB_BCM_HOST)
     target_link_libraries(mpvplayer ${LIB_BCM_HOST})
 endif()
-target_link_libraries(mpvplayer png m vlc)
+target_link_libraries(mpvplayer png m vlc drm)
 target_include_directories(mpvplayer PUBLIC
     /usr/include/dbus-1.0
     /usr/lib/arm-linux-gnueabihf/dbus-1.0/include
-    /opt/vc/include)
+    /opt/vc/include /usr/include/libdrm)
