@@ -23,6 +23,17 @@ struct drm_vec_plane {
     uint32_t possible_crtcs;
     int width;
     int height;
+    uint32_t fb_id;
+    uint32_t fb_handle;
+    uint8_t *fb_pixels;
+    size_t fb_size;
+    uint32_t fb_pitch;
+    uint32_t fb_ids[2];
+    uint32_t fb_handles[2];
+    uint8_t *fb_pixels_buf[2];
+    size_t fb_sizes[2];
+    uint32_t fb_pitches[2];
+    int active_fb_index;
 };
 
 static struct drm_vec_plane drm_vec_plane = {
@@ -33,7 +44,27 @@ static struct drm_vec_plane drm_vec_plane = {
     .possible_crtcs = 0,
     .width = 0,
     .height = 0,
+    .fb_id = 0,
+    .fb_handle = 0,
+    .fb_pixels = NULL,
+    .fb_size = 0,
+    .fb_pitch = 0,
+    .fb_ids = {0, 0},
+    .fb_handles = {0, 0},
+    .fb_pixels_buf = {NULL, NULL},
+    .fb_sizes = {0, 0},
+    .fb_pitches = {0, 0},
+    .active_fb_index = 0,
 };
+
+static void drm_vec_plane_wait_vblank(void) {
+    drmVBlank vblank = {0};
+    vblank.request.type = DRM_VBLANK_RELATIVE | DRM_VBLANK_NEXTONMISS;
+    vblank.request.sequence = 1;
+    if (drmWaitVBlank(drm_vec_plane.fd, &vblank) != 0) {
+        fprintf(stderr, "drm-rp1-vec: drmWaitVBlank failed: %s\n", strerror(errno));
+    }
+}
 
 static int drm_vec_plane_set_colorbar(void) {
     if (drm_vec_plane.fd < 0 || drm_vec_plane.plane_id == 0) {
@@ -93,17 +124,22 @@ static int drm_vec_plane_set_colorbar(void) {
         }
     }
 
+    uint32_t handles[4] = { create.handle, 0, 0, 0 };
+    uint32_t pitches[4] = { pitch, 0, 0, 0 };
+    uint32_t offsets[4] = { 0, 0, 0, 0 };
     uint32_t fb_id = 0;
-    int ret = drmModeAddFB(drm_vec_plane.fd, width, height, 24, 32,
-                           pitch, create.handle, &fb_id);
+    int ret = drmModeAddFB2(drm_vec_plane.fd, width, height,
+                            DRM_FORMAT_XRGB8888,
+                            handles, pitches, offsets, &fb_id, 0);
     if (ret != 0) {
         fprintf(stderr, "drm-rp1-vec: drmModeAddFB failed: %d\n", ret);
         munmap(pixels, size);
         return -1;
     }
 
+    drm_vec_plane_wait_vblank();
     ret = drmModeSetPlane(drm_vec_plane.fd, drm_vec_plane.plane_id,
-                          drm_vec_plane.crtc_id, fb_id, 0,
+                          drm_vec_plane.crtc_id, fb_id, DRM_MODE_PAGE_FLIP_EVENT,
                           0, 0, width, height,
                           0, 0, width << 16, height << 16);
     if (ret != 0) {
@@ -183,8 +219,8 @@ if (drmSetClientCap(fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1) < 0) {
     drm_vec_plane.crtc_id = plane->crtc_id;
     drm_vec_plane.connector_id = resources->connectors[0];
     drm_vec_plane.possible_crtcs = plane->possible_crtcs;
-    drm_vec_plane.width = 1920;
-    drm_vec_plane.height = 1080;
+    drm_vec_plane.width = 720;
+    drm_vec_plane.height = 576;
 
     printf("drm-rp1-vec: acquired plane id=%u crtc=%u connector=%u possible_crtcs=0x%x\n",
            drm_vec_plane.plane_id,
@@ -198,13 +234,128 @@ if (drmSetClientCap(fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1) < 0) {
     return 0;
 }
 
+static int drm_vec_plane_prepare_buffer(unsigned out_w, unsigned out_h, int index) {
+    uint32_t pitch = out_w * 4U;
+    uint32_t size = pitch * out_h;
+
+    if (drm_vec_plane.fb_ids[index] != 0) {
+        return 0;
+    }
+
+    struct drm_mode_create_dumb create = {0};
+    create.width = out_w;
+    create.height = out_h;
+    create.bpp = 32;
+    create.flags = 0;
+    if (drmIoctl(drm_vec_plane.fd, DRM_IOCTL_MODE_CREATE_DUMB, &create) != 0) {
+        fprintf(stderr, "drm-rp1-vec: DRM_IOCTL_MODE_CREATE_DUMB failed\n");
+        return -1;
+    }
+
+    drm_vec_plane.fb_handles[index] = create.handle;
+    drm_vec_plane.fb_pitches[index] = pitch;
+    drm_vec_plane.fb_sizes[index] = size;
+
+    struct drm_mode_map_dumb map = {0};
+    map.handle = create.handle;
+    if (drmIoctl(drm_vec_plane.fd, DRM_IOCTL_MODE_MAP_DUMB, &map) != 0) {
+        fprintf(stderr, "drm-rp1-vec: DRM_IOCTL_MODE_MAP_DUMB failed\n");
+        struct drm_mode_destroy_dumb destroy = { .handle = create.handle };
+        drmIoctl(drm_vec_plane.fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
+        return -1;
+    }
+
+    drm_vec_plane.fb_pixels_buf[index] = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED,
+                                             drm_vec_plane.fd, map.offset);
+    if (drm_vec_plane.fb_pixels_buf[index] == MAP_FAILED) {
+        fprintf(stderr, "drm-rp1-vec: mmap failed: %s\n", strerror(errno));
+        struct drm_mode_destroy_dumb destroy = { .handle = create.handle };
+        drmIoctl(drm_vec_plane.fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
+        drm_vec_plane.fb_pixels_buf[index] = NULL;
+        return -1;
+    }
+
+    int ret = drmModeAddFB(drm_vec_plane.fd, out_w, out_h, 24, 32,
+                           pitch, create.handle, &drm_vec_plane.fb_ids[index]);
+    if (ret != 0) {
+        fprintf(stderr, "drm-rp1-vec: drmModeAddFB failed: %d\n", ret);
+        munmap(drm_vec_plane.fb_pixels_buf[index], size);
+        drm_vec_plane.fb_pixels_buf[index] = NULL;
+        struct drm_mode_destroy_dumb destroy = { .handle = create.handle };
+        drmIoctl(drm_vec_plane.fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
+        drm_vec_plane.fb_ids[index] = 0;
+        drm_vec_plane.fb_handles[index] = 0;
+        return -1;
+    }
+
+    return 0;
+}
+
+static int drm_vec_plane_update_fb(const uint8_t *argb, unsigned width, unsigned height) {
+    if (!argb || width == 0 || height == 0) {
+        return -1;
+    }
+
+    if (drm_vec_plane_acquire() < 0) {
+        return -1;
+    }
+
+    unsigned out_w = drm_vec_plane.width > 0 ? drm_vec_plane.width : width;
+    unsigned out_h = drm_vec_plane.height > 0 ? drm_vec_plane.height : height;
+    uint32_t pitch = out_w * 4U;
+
+    int target_index = drm_vec_plane.active_fb_index ^ 1;
+    if (drm_vec_plane_prepare_buffer(out_w, out_h, target_index) < 0) {
+        return -1;
+    }
+
+    uint8_t *pixels = drm_vec_plane.fb_pixels_buf[target_index];
+    if ((width == out_w && height == out_h)) {
+        memcpy(pixels, argb, drm_vec_plane.fb_sizes[target_index]);
+    } else {
+        for (unsigned y = 0; y < out_h; ++y) {
+            unsigned sy = (y * height) / out_h;
+            uint32_t *dst = (uint32_t *)(pixels + (size_t)y * pitch);
+            const uint32_t *src = (const uint32_t *)(argb + (size_t)sy * width * 4U);
+            for (unsigned x = 0; x < out_w; ++x) {
+                unsigned sx = (x * width) / out_w;
+                dst[x] = src[sx];
+            }
+        }
+    }
+
+//    drm_vec_plane_wait_vblank();
+    int ret = drmModeSetPlane(drm_vec_plane.fd, drm_vec_plane.plane_id,
+                              drm_vec_plane.crtc_id, drm_vec_plane.fb_ids[target_index], DRM_MODE_PAGE_FLIP_EVENT,
+                              0, 0, out_w, out_h,
+                              0, 0, out_w << 16, out_h << 16);
+    if (ret != 0) {
+        fprintf(stderr, "drm-rp1-vec: drmModeSetPlane failed: %d\n", ret);
+        return -1;
+    }
+
+    drm_vec_plane.active_fb_index = target_index;
+    drm_vec_plane.fb_id = drm_vec_plane.fb_ids[target_index];
+    drm_vec_plane.fb_handle = drm_vec_plane.fb_handles[target_index];
+    drm_vec_plane.fb_pixels = pixels;
+    drm_vec_plane.fb_size = drm_vec_plane.fb_sizes[target_index];
+    drm_vec_plane.fb_pitch = pitch;
+
+    // printf("drm-rp1-vec: uploaded %ux%u ARGB frame to plane %u via back buffer %u\n",
+    //        out_w, out_h, drm_vec_plane.plane_id, drm_vec_plane.fb_id);
+    return 0;
+}
+
 void load_strap(char *path) {
     (void)path;
 }
 
 void dispmanx_init(void) {
     drm_vec_plane_acquire();
-    drm_vec_plane_set_colorbar();
+}
+
+void dispmanx_display_argb(const uint8_t *argb, unsigned width, unsigned height) {
+    drm_vec_plane_update_fb(argb, width, height);
 }
 
 void dispmanx_alpha(int a) {
@@ -215,6 +366,27 @@ void blank_background(void) {
 }
 
 void dispmanx_close(void) {
+    for (int i = 0; i < 2; ++i) {
+        if (drm_vec_plane.fb_pixels_buf[i] != NULL) {
+            munmap(drm_vec_plane.fb_pixels_buf[i], drm_vec_plane.fb_sizes[i]);
+            drm_vec_plane.fb_pixels_buf[i] = NULL;
+        }
+        if (drm_vec_plane.fb_ids[i] != 0 && drm_vec_plane.fd >= 0) {
+            drmModeRmFB(drm_vec_plane.fd, drm_vec_plane.fb_ids[i]);
+            drm_vec_plane.fb_ids[i] = 0;
+        }
+        if (drm_vec_plane.fb_handles[i] != 0 && drm_vec_plane.fd >= 0) {
+            struct drm_mode_destroy_dumb destroy = { .handle = drm_vec_plane.fb_handles[i] };
+            drmIoctl(drm_vec_plane.fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
+            drm_vec_plane.fb_handles[i] = 0;
+        }
+    }
+    if (drm_vec_plane.fb_pixels != NULL) {
+        drm_vec_plane.fb_pixels = NULL;
+    }
+    if (drm_vec_plane.fb_id != 0) {
+        drm_vec_plane.fb_id = 0;
+    }
     if (drm_vec_plane.fd >= 0) {
         close(drm_vec_plane.fd);
         drm_vec_plane.fd = -1;
@@ -222,6 +394,7 @@ void dispmanx_close(void) {
         drm_vec_plane.crtc_id = 0;
         drm_vec_plane.connector_id = 0;
         drm_vec_plane.possible_crtcs = 0;
+        drm_vec_plane.active_fb_index = 0;
     }
 }
 

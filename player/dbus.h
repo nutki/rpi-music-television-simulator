@@ -16,6 +16,6 @@ int64_t dbus_crop(int x, int y, int w, int h);
 int64_t dbus_aspect_mode(const char *s);
 
 #ifdef USE_LIBVLC
-int libvlc_open_file(const char *path, int64_t start_ms);
+int libvlc_open_file(const char *path, int64_t start_ms, int volume_correction);
 int libvlc_player_has_ended(void);
 #endif

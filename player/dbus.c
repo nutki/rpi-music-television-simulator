@@ -5,8 +5,11 @@
 #include <string.h>
 #include <stdint.h>
 #include <math.h>
+#include <sys/types.h>
+#include <libyuv.h>
 #include <vlc/vlc.h>
 #include "dbus.h"
+#include "dispmanx.h"
 
 static libvlc_instance_t *vlc_instance;
 static libvlc_media_player_t *vlc_player;
@@ -14,10 +17,10 @@ static libvlc_media_player_t *vlc_player;
 struct libvlc_frame_log {
    unsigned width;
    unsigned height;
-   unsigned pitch;
-   unsigned lines;
    unsigned bytes;
    unsigned char *buffer;
+   unsigned plane_count;
+   char chroma[5];
 };
 
 static struct libvlc_frame_log libvlc_frame_log = { 0 };
@@ -29,9 +32,9 @@ static void libvlc_log_cleanup(void *opaque) {
    frame->buffer = NULL;
    frame->width = 0;
    frame->height = 0;
-   frame->pitch = 0;
-   frame->lines = 0;
    frame->bytes = 0;
+   frame->plane_count = 0;
+   frame->chroma[0] = '\0';
    printf("libvlc: cleanup callback\n");
 }
 
@@ -48,17 +51,47 @@ static unsigned libvlc_log_format(void **opaque, char *chroma,
       return 1;
    }
 
+   unsigned y_stride = 0;
+   unsigned uv_stride = 0;
+   unsigned y_lines = *height;
+   unsigned uv_lines = (*height + 1U) / 2U;
+   unsigned plane_count = 1;
    unsigned bpp = 4;
-   if (chroma && (!strncmp(chroma, "YUYV", 4) || !strncmp(chroma, "UYVY", 4) ||
-       !strncmp(chroma, "YV12", 4) || !strncmp(chroma, "I420", 4))) {
+
+   if (chroma && (!strncmp(chroma, "YUYV", 4) || !strncmp(chroma, "UYVY", 4))) {
       bpp = 2;
+      y_stride = *width * bpp;
+      pitches[0] = y_stride;
+      lines[0] = *height;
+      frame->bytes = y_stride * *height;
+   } else if (chroma && (!strncmp(chroma, "YV12", 4) || !strncmp(chroma, "I420", 4))) {
+      y_stride = *width;
+      uv_stride = (*width + 1U) / 2U;
+      frame->bytes = (size_t)y_stride * *height + (size_t)uv_stride * uv_lines * 2U;
+      pitches[0] = y_stride;
+      lines[0] = *height;
+      pitches[1] = uv_stride;
+      lines[1] = uv_lines;
+      pitches[2] = uv_stride;
+      lines[2] = uv_lines;
+      plane_count = 3;
+      bpp = 1;
+   } else {
+      y_stride = *width * bpp;
+      pitches[0] = y_stride;
+      lines[0] = *height;
+      frame->bytes = y_stride * *height;
    }
 
    frame->width = *width;
    frame->height = *height;
-   frame->pitch = *width * bpp;
-   frame->lines = *height;
-   frame->bytes = frame->pitch * frame->lines;
+   frame->plane_count = plane_count;
+   if (chroma) {
+      memcpy(frame->chroma, chroma, 4);
+      frame->chroma[4] = '\0';
+   } else {
+      frame->chroma[0] = '\0';
+   }
 
    free(frame->buffer);
    frame->buffer = calloc(1, frame->bytes > 0 ? frame->bytes : 1);
@@ -67,29 +100,79 @@ static unsigned libvlc_log_format(void **opaque, char *chroma,
       return 0;
    }
 
-   pitches[0] = frame->pitch;
-   lines[0] = frame->lines;
    if (opaque) *opaque = frame;
-   printf("libvlc: format callback prepared %ux%u pitch=%u bytes=%u\n",
-          frame->width, frame->height, frame->pitch, frame->bytes);
+   printf("libvlc: format callback prepared %ux%u plane_count=%u bytes=%u\n",
+          frame->width, frame->height, frame->plane_count, frame->bytes);
    return 1;
 }
 
 static void *libvlc_log_lock(void *opaque, void **planes) {
    struct libvlc_frame_log *frame = opaque;
-//   printf("libvlc: lock callback: opaque=%p\n", opaque);
    if (!frame) return NULL;
    if (!frame->buffer && frame->bytes > 0) {
       frame->buffer = calloc(1, frame->bytes);
    }
    if (!planes) return frame;
    for (int i = 0; i < 4; ++i) planes[i] = NULL;
-   planes[0] = frame->buffer;
+   if (frame->plane_count == 3 && frame->buffer) {
+      unsigned uv_stride = (frame->width + 1U) / 2U;
+      unsigned uv_lines = (frame->height + 1U) / 2U;
+      unsigned y_size = frame->width * frame->height;
+      unsigned uv_size = uv_stride * uv_lines;
+      planes[0] = frame->buffer;
+      planes[1] = (unsigned char *)planes[0] + y_size;
+      planes[2] = (unsigned char *)planes[1] + uv_size;
+   } else {
+      planes[0] = frame->buffer;
+   }
    return frame;
 }
 
 static void libvlc_log_unlock(void *opaque, void *picture, void *const *planes) {
    (void)picture;
+   struct libvlc_frame_log *frame = opaque;
+   if (!frame || !planes || !planes[0]) {
+      return;
+   }
+
+   if (frame->plane_count == 1) {
+      printf("libvlc: packed frame chroma=%s width=%u height=%u -> display directly\n",
+             frame->chroma[0] ? frame->chroma : "????", frame->width, frame->height);
+      dispmanx_display_argb((const uint8_t *)planes[0], frame->width, frame->height);
+      return;
+   }
+
+   if (!planes[1] || !planes[2] || frame->plane_count != 3) {
+      return;
+   }
+   unsigned target_w = 720, target_h = 576;
+   unsigned target_y_stride = target_w;
+   unsigned target_uv_stride = (target_w + 1u)/2u;
+   unsigned target_uv_h = (target_h + 1u)/2u;
+   static uint8_t tmp_buf[720 * 576 * 4], rgb_buffer[720 * 576 * 4];
+   //uint8_t tmp_buf[target_y_stride * target_h + target_uv_stride * target_uv_h * 2];
+   uint8_t *tmp_y = tmp_buf, *tmp_u = tmp_y + target_y_stride * target_h, *tmp_v = tmp_u + target_uv_stride * target_uv_h;
+   //uint32_t rgb_buffer[target_w * target_h * 10];
+   unsigned y_stride = frame->width;
+   unsigned uv_stride = (frame->width + 1U) / 2U;
+   int r1 = I420Scale((const uint8_t *)planes[0], y_stride,
+                      (const uint8_t *)planes[1], uv_stride,
+                      (const uint8_t *)planes[2], uv_stride,
+                      frame->width, frame->height,
+                      tmp_y, target_y_stride,
+                      tmp_u, target_uv_stride,
+                      tmp_v, target_uv_stride,
+                      target_w, target_h, kFilterBilinear);
+   int ret = I420ToARGB(tmp_y, target_y_stride,
+                        tmp_u, target_uv_stride,
+                        tmp_v, target_uv_stride,
+                        (uint8_t*)rgb_buffer, (int)(target_w * 4U),
+                        (int)target_w, (int)target_h);
+   if (ret == 0) {
+      // printf("libvlc: converted %ux%u %s frame to ARGB via libyuv\n",
+      //        frame->width, frame->height, frame->chroma[0] ? frame->chroma : "I420");
+     dispmanx_display_argb((uint8_t*)rgb_buffer, target_w, target_h);
+   }
    // printf("libvlc: unlock callback: opaque=%p planes0=%p\n", opaque,
    //        planes ? planes[0] : NULL);
 }
@@ -125,13 +208,18 @@ int libvlc_open_file(const char *path, int64_t start_us, int volume_correction) 
    if (!vlc_player) return -1;
    libvlc_media_t *media = libvlc_media_new_path(vlc_instance, path);
    if (!media) return -1;
+
+   char volume_option[128];
+   char start_option[128];
    int vol = libvlc_volume_from_correction(volume_correction);
-   snprintf(start_time, sizeof(start_time), ":volume=%lld", vol);
+   snprintf(volume_option, sizeof(volume_option), ":volume=%d", vol);
+   libvlc_media_add_option(media, volume_option);
+
    if (start_us > 0) {
-      char start_time[1024];
-      snprintf(start_time, sizeof(start_time), ":start-time=%lld", start_us / 1000000LL);
-      libvlc_media_add_option(media, start_time);
+      snprintf(start_option, sizeof(start_option), ":start-time=%lld", start_us / 1000000LL);
+      libvlc_media_add_option(media, start_option);
    }
+
    libvlc_media_player_set_media(vlc_player, media);
    libvlc_media_release(media);
    // if (start_us > 0) {

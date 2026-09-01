@@ -4,6 +4,7 @@ void dispmanx_init();
 void dispmanx_alpha(int a);
 void blank_background();
 void dispmanx_close();
+void dispmanx_display_argb(const uint8_t *argb, unsigned width, unsigned height);
 void osd_text(const char *c, int align);
 void osd_text_clear();
 #define BG_MODE_BLACK 0
