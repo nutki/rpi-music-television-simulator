@@ -16,12 +16,19 @@
 #include <xf86drmMode.h>
 #include <drm_fourcc.h>
 #include "image.h"
+#include "vcrfont.h"
 #include <libyuv.h>
 
 extern bool loadPNG(const char *f_name, Image *image);
 
 #define STRAP_WIDTH 720
 #define STRAP_HEIGHT 576
+#define OSD_WIDTH 320
+#define OSD_HEIGHT VCR_FONT_H
+#define OSD_TARGET_WIDTH 620
+#define OSD_OFFSET_X ((720 - 620)/2)
+#define OSD_TARGET_HEIGHT 48
+#define OSD_OFFSET_Y 40
 
 struct drm_vec_plane {
     int fd;
@@ -47,6 +54,9 @@ struct drm_vec_plane {
     uint8_t *strap_premultiplied;
     uint8_t *strap_alpha_mask;
     int strap_alpha;
+    uint8_t *osd_source;
+    uint8_t *osd_pixels;
+    int osd_active;
 };
 
 static struct drm_vec_plane drm_vec_plane = {
@@ -73,6 +83,9 @@ static struct drm_vec_plane drm_vec_plane = {
     .strap_premultiplied = NULL,
     .strap_alpha_mask = NULL,
     .strap_alpha = -1,
+    .osd_source = NULL,
+    .osd_pixels = NULL,
+    .osd_active = 0,
 };
 
 static void drm_vec_plane_wait_vblank(void) {
@@ -354,6 +367,18 @@ static int drm_vec_plane_update_fb(const uint8_t *argb, unsigned width, unsigned
         }
     }
 
+    if (drm_vec_plane.osd_active && drm_vec_plane.osd_pixels) {
+        int blend_ret = ARGBBlend(drm_vec_plane.osd_pixels,
+                                  OSD_TARGET_WIDTH * 4,
+                                  pixels + pitch * OSD_OFFSET_Y + OSD_OFFSET_X * 4, pitch,
+                                  pixels + pitch * OSD_OFFSET_Y + OSD_OFFSET_X * 4, pitch,
+                                  OSD_TARGET_WIDTH, OSD_TARGET_HEIGHT);
+        if (blend_ret != 0) {
+            fprintf(stderr, "drm-rp1-vec: OSD blend failed: %d\n", blend_ret);
+            return -1;
+        }
+    }
+
 //    drm_vec_plane_wait_vblank();
     int ret = drmModeSetPlane(drm_vec_plane.fd, drm_vec_plane.plane_id,
                               drm_vec_plane.crtc_id, drm_vec_plane.fb_ids[target_index], DRM_MODE_PAGE_FLIP_EVENT,
@@ -506,6 +531,11 @@ void dispmanx_close(void) {
     free(drm_vec_plane.strap_alpha_mask);
     drm_vec_plane.strap_alpha_mask = NULL;
     drm_vec_plane.strap_alpha = -1;
+    free(drm_vec_plane.osd_source);
+    drm_vec_plane.osd_source = NULL;
+    free(drm_vec_plane.osd_pixels);
+    drm_vec_plane.osd_pixels = NULL;
+    drm_vec_plane.osd_active = 0;
     for (int i = 0; i < 2; ++i) {
         if (drm_vec_plane.fb_pixels_buf[i] != NULL) {
             munmap(drm_vec_plane.fb_pixels_buf[i], drm_vec_plane.fb_sizes[i]);
@@ -538,12 +568,54 @@ void dispmanx_close(void) {
     }
 }
 
+static uint32_t *osd_render_pixels;
+
+static void drm_vec_plane_put_osd_pixel(int x, int y, int set) {
+    if (!osd_render_pixels || x < 0 || x >= OSD_WIDTH ||
+        y < 0 || y >= OSD_HEIGHT) {
+        return;
+    }
+    osd_render_pixels[(size_t)y * OSD_WIDTH + (size_t)x] =
+        set ? 0xff00ff00U : 0U;
+}
+
 void osd_text(const char *c, int align) {
-    (void)c;
     (void)align;
+    if (!c) {
+        return;
+    }
+    if (!drm_vec_plane.osd_source) {
+        drm_vec_plane.osd_source = calloc((size_t)OSD_WIDTH * OSD_HEIGHT, 4U);
+    }
+    if (!drm_vec_plane.osd_pixels) {
+        drm_vec_plane.osd_pixels = malloc((size_t)OSD_TARGET_WIDTH * OSD_TARGET_HEIGHT * 4U);
+    }
+    if (!drm_vec_plane.osd_source || !drm_vec_plane.osd_pixels) {
+        fprintf(stderr, "drm-rp1-vec: OSD buffer allocation failed\n");
+        drm_vec_plane.osd_active = 0;
+        return;
+    }
+
+    memset(drm_vec_plane.osd_source, 0,
+           (size_t)OSD_WIDTH * OSD_HEIGHT * 4U);
+    osd_render_pixels = (uint32_t *)drm_vec_plane.osd_source;
+    render_text(c, drm_vec_plane_put_osd_pixel, OSD_WIDTH);
+    osd_render_pixels = NULL;
+
+    int ret = ARGBScale(drm_vec_plane.osd_source, OSD_WIDTH * 4,
+                        OSD_WIDTH, OSD_HEIGHT,
+                        drm_vec_plane.osd_pixels, OSD_TARGET_WIDTH * 4,
+                        OSD_TARGET_WIDTH, OSD_TARGET_HEIGHT, kFilterBilinear);
+    if (ret != 0) {
+        fprintf(stderr, "drm-rp1-vec: OSD scaling failed: %d\n", ret);
+        drm_vec_plane.osd_active = 0;
+        return;
+    }
+    drm_vec_plane.osd_active = 1;
 }
 
 void osd_text_clear(void) {
+    drm_vec_plane.osd_active = 0;
 }
 
 void bg_mode(int mode) {
