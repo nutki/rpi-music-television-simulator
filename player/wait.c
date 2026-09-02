@@ -453,11 +453,11 @@ void switch_to_channel(int nr) {
   printf("Switching to channel %d\n", nr);
   current_channel = nr;
   struct channel_state *s = channel_state + current_channel;
+  channel_is_random = s->is_random;
   struct channel_entry *ce = channel_current_entry();
   if (ce) {
     read_video_conf(ce->path);
     current_position = s->position;
-    channel_is_random = s->is_random;
   }
   save_channels_state();
   show_channel();
