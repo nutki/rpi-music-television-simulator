@@ -8,6 +8,7 @@
 #include <sys/types.h>
 #include <libyuv.h>
 #include <vlc/vlc.h>
+#include <time.h>
 #include "dbus.h"
 #include "dispmanx.h"
 
@@ -282,13 +283,27 @@ int libvlc_player_has_ended(void) {
    return state == libvlc_Ended || state == libvlc_Stopped;
 }
 
+static int64_t monotonic_us(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+
+    return (int64_t)ts.tv_sec * 1000000LL +
+           ts.tv_nsec / 1000;
+}
 static int64_t libvlc_query(const char *property) {
+   static int last_pos;
+   static int64_t last_time;
    if (!vlc_player) return -1;
    if (!strcmp(property, "Duration")) {
       return libvlc_media_player_get_length(vlc_player) * 1000LL;
    }
    if (!strcmp(property, "Position")) {
-      return libvlc_media_player_get_time(vlc_player) * 1000LL;
+      int state = libvlc_media_player_get_state(vlc_player);
+      int pos = libvlc_media_player_get_time(vlc_player);
+      if (pos != last_pos) last_time = monotonic_us();
+      int64_t time_since = state == libvlc_Playing ? monotonic_us() - last_time : 0;
+      last_pos = state == libvlc_Playing ? pos : -1;
+      return pos * 1000LL + time_since;
    }
    if (!strcmp(property, "ResWidth")) {
       return libvlc_video_get_width(vlc_player);
