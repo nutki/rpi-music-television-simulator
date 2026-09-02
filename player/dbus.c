@@ -55,9 +55,6 @@ static void recalculate_geometry(struct libvlc_frame_log *frame) {
    unsigned source_w = frame->width;
    unsigned source_h = frame->height;
    if (!source_w || !source_h) return;
-   printf("Recalculating @ %d %d with crop y %d\n", source_w, source_h, crop_y);
-   // printf("crop: %d,%d,%d,%d\n", crop_x, crop_y, crop_w, crop_h);
-   //crop_x = crop_y = crop_w = crop_h = -1;
    if (crop_x < 0) crop_x = 0;
    if (crop_y < 0) crop_y = 0;
    if (crop_w < 0 || crop_w > source_w) crop_w = source_w;
@@ -66,7 +63,6 @@ static void recalculate_geometry(struct libvlc_frame_log *frame) {
    if (crop_y & 1) crop_y--;
    if (crop_w & 1) crop_w++;
    if (crop_h & 1) crop_h++;
-   printf("crop corrected: %d,%d,%d,%d\n", crop_x, crop_y, crop_w, crop_h);
 
    if ((int64_t)crop_w * aspect_y >= (int64_t)crop_h * aspect_x) {
       // source is wider than target aspect
