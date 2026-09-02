@@ -320,8 +320,16 @@ int64_t dbus_action(char *action_name) {
       else if (state != libvlc_Ended && state != libvlc_Error) libvlc_media_player_play(vlc_player);
       return 0;
    }
-   if (!strcmp(action_name, "ShowSubtitles")) return 0;
-   if (!strcmp(action_name, "HideSubtitles")) return 0;
+   if (!strcmp(action_name, "ShowSubtitles")) {
+      libvlc_track_description_t *subs = libvlc_video_get_spu_description(vlc_player);
+      while (subs && subs->i_id < 0) subs = subs->p_next;
+      if (subs) libvlc_video_set_spu(vlc_player, subs->i_id);
+      return 0;
+   }
+   if (!strcmp(action_name, "HideSubtitles")) {
+      libvlc_video_set_spu(vlc_player, -1);
+      return 0;
+   }
    return -1;
 }
 
