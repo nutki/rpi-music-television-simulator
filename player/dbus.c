@@ -23,7 +23,16 @@ struct libvlc_frame_log {
    char chroma[5];
 };
 
+static int fill_frame = 0;
+static int crop_x = -1, crop_y = -1, crop_w = -1, crop_h = -1;
 static struct libvlc_frame_log libvlc_frame_log = { 0 };
+static unsigned target_w = 720, target_h = 576;
+static int aspect_x = 4;
+static int aspect_y = 3;
+static unsigned target_aspect_w;
+static unsigned target_aspect_h;
+static unsigned target_offset_h;
+static unsigned target_offset_w;
 
 static void libvlc_log_cleanup(void *opaque) {
    struct libvlc_frame_log *frame = opaque;
@@ -36,6 +45,46 @@ static void libvlc_log_cleanup(void *opaque) {
    frame->plane_count = 0;
    frame->chroma[0] = '\0';
    printf("libvlc: cleanup callback\n");
+}
+// Setting crop geometry: 0,45,480,270
+// crop corrected: 0,44,320,258
+// 258 44 258 576 0
+// crop corrected: 0,0,320,258
+// 258 0 258 576 0
+static void recalculate_geometry(struct libvlc_frame_log *frame) {
+   unsigned source_w = frame->width;
+   unsigned source_h = frame->height;
+   if (!source_w || !source_h) return;
+   printf("Recalculating @ %d %d with crop y %d\n", source_w, source_h, crop_y);
+   // printf("crop: %d,%d,%d,%d\n", crop_x, crop_y, crop_w, crop_h);
+   //crop_x = crop_y = crop_w = crop_h = -1;
+   if (crop_x < 0) crop_x = 0;
+   if (crop_y < 0) crop_y = 0;
+   if (crop_w < 0 || crop_w > source_w) crop_w = source_w;
+   if (crop_h < 0 || crop_h > source_h) crop_h = source_h;
+   if (crop_x & 1) crop_x--;
+   if (crop_y & 1) crop_y--;
+   if (crop_w & 1) crop_w++;
+   if (crop_h & 1) crop_h++;
+   printf("crop corrected: %d,%d,%d,%d\n", crop_x, crop_y, crop_w, crop_h);
+
+   if ((int64_t)crop_w * aspect_y >= (int64_t)crop_h * aspect_x) {
+      // source is wider than target aspect
+      target_aspect_w = target_w;
+      target_aspect_h = (int64_t)target_h * aspect_x * crop_h
+                     / ((int64_t)aspect_y * crop_w);
+      target_offset_h = (target_h - target_aspect_h) / 2;
+      target_offset_w = 0;
+   } else {
+      // source is taller / narrower
+      target_aspect_h = target_h;
+      target_aspect_w = (int64_t)target_w * aspect_y * crop_w
+                     / ((int64_t)aspect_x * crop_h);
+      target_offset_w = (target_w - target_aspect_w) / 2;
+      target_offset_h = 0;
+   }
+   printf("%d %d %d %d %d\n", source_h, crop_y, crop_h, target_aspect_h, target_offset_h);
+   printf("aspect corrected size: %dx%d\n", target_aspect_w, target_aspect_h);
 }
 
 static unsigned libvlc_log_format(void **opaque, char *chroma,
@@ -101,6 +150,7 @@ static unsigned libvlc_log_format(void **opaque, char *chroma,
    }
 
    if (opaque) *opaque = frame;
+   recalculate_geometry(frame);
    printf("libvlc: format callback prepared %ux%u plane_count=%u bytes=%u\n",
           frame->width, frame->height, frame->plane_count, frame->bytes);
    return 1;
@@ -145,7 +195,7 @@ static void libvlc_log_unlock(void *opaque, void *picture, void *const *planes) 
    if (!planes[1] || !planes[2] || frame->plane_count != 3) {
       return;
    }
-   unsigned target_w = 720, target_h = 576;
+
    unsigned target_y_stride = target_w;
    unsigned target_uv_stride = (target_w + 1u)/2u;
    unsigned target_uv_h = (target_h + 1u)/2u;
@@ -155,26 +205,25 @@ static void libvlc_log_unlock(void *opaque, void *picture, void *const *planes) 
    //uint32_t rgb_buffer[target_w * target_h * 10];
    unsigned y_stride = frame->width;
    unsigned uv_stride = (frame->width + 1U) / 2U;
-   int r1 = I420Scale((const uint8_t *)planes[0], y_stride,
-                      (const uint8_t *)planes[1], uv_stride,
-                      (const uint8_t *)planes[2], uv_stride,
-                      frame->width, frame->height,
+   unsigned target_stride = target_w * 4U;
+   int r1 = I420Scale((const uint8_t *)planes[0] + crop_x + crop_y * y_stride, y_stride,
+                      (const uint8_t *)planes[1] + crop_x/2 + crop_y/2 * uv_stride, uv_stride,
+                      (const uint8_t *)planes[2] + crop_x/2 + crop_y/2 * uv_stride, uv_stride,
+                      crop_w, crop_h,
                       tmp_y, target_y_stride,
                       tmp_u, target_uv_stride,
                       tmp_v, target_uv_stride,
-                      target_w, target_h, kFilterBilinear);
+                      target_aspect_w, target_aspect_h, kFilterBilinear);
    int ret = I420ToARGB(tmp_y, target_y_stride,
                         tmp_u, target_uv_stride,
                         tmp_v, target_uv_stride,
-                        (uint8_t*)rgb_buffer, (int)(target_w * 4U),
-                        (int)target_w, (int)target_h);
+                        rgb_buffer + target_stride * target_offset_h + target_offset_w * 4, target_stride,
+                        (int)target_aspect_w, (int)target_aspect_h);
    if (ret == 0) {
       // printf("libvlc: converted %ux%u %s frame to ARGB via libyuv\n",
       //        frame->width, frame->height, frame->chroma[0] ? frame->chroma : "I420");
      dispmanx_display_argb((uint8_t*)rgb_buffer, target_w, target_h);
    }
-   // printf("libvlc: unlock callback: opaque=%p planes0=%p\n", opaque,
-   //        planes ? planes[0] : NULL);
 }
 
 static void libvlc_log_display(void *opaque, void *picture) {
@@ -227,6 +276,7 @@ int libvlc_open_file(const char *path, int64_t start_us, int volume_correction) 
    //    libvlc_media_player_set_time(vlc_player, (libvlc_time_t)(start_ms / 1000LL));
    // }
    libvlc_media_player_play(vlc_player);
+   crop_x = crop_y = crop_w = crop_h = -1;
    return 0;
 }
 
@@ -298,21 +348,18 @@ int64_t dbus_volume(int64_t vol) {
 }
 
 int64_t dbus_crop(int x, int y, int w, int h) {
-   char geom[64];
-   if (!vlc_player) return -1;
-   if (x < 0 || y < 0 || w <= x || h <= y) {
-      libvlc_video_set_crop_geometry(vlc_player, NULL);
-      return 0;
-   }
-   snprintf(geom, sizeof(geom), "%d,%d,%d,%d", x, y, w - x, h - y);
-   printf("Setting crop geometry: %s\n", geom);
-   libvlc_video_set_crop_geometry(vlc_player, geom);
+   printf("Setting crop geometry: %d,%d,%d,%d\n", x, y, w-x, h-y);
+   crop_x = x;
+   crop_y = y;
+   crop_w = w < 0 ? w : w - x;
+   crop_h = h < 0 ? h : h - y;
+   recalculate_geometry(&libvlc_frame_log);
    return 0;
 }
 
 int64_t dbus_aspect_mode(const char *mode) {
    if (!vlc_player) return -1;
-   libvlc_video_set_aspect_ratio(vlc_player, mode && !strcmp(mode, "fill") ? "16:9" : "4:3");
+   fill_frame = strcmp(mode, "fill") == 0;
    return 0;
 }
 
