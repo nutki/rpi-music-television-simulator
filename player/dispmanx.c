@@ -2,6 +2,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,6 +15,13 @@
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 #include <drm_fourcc.h>
+#include "image.h"
+#include <libyuv.h>
+
+extern bool loadPNG(const char *f_name, Image *image);
+
+#define STRAP_WIDTH 720
+#define STRAP_HEIGHT 576
 
 struct drm_vec_plane {
     int fd;
@@ -34,6 +42,11 @@ struct drm_vec_plane {
     size_t fb_sizes[2];
     uint32_t fb_pitches[2];
     int active_fb_index;
+    uint8_t *strap_pixels;
+    size_t strap_size;
+    uint8_t *strap_premultiplied;
+    uint8_t *strap_alpha_mask;
+    int strap_alpha;
 };
 
 static struct drm_vec_plane drm_vec_plane = {
@@ -55,6 +68,11 @@ static struct drm_vec_plane drm_vec_plane = {
     .fb_sizes = {0, 0},
     .fb_pitches = {0, 0},
     .active_fb_index = 0,
+    .strap_pixels = NULL,
+    .strap_size = 0,
+    .strap_premultiplied = NULL,
+    .strap_alpha_mask = NULL,
+    .strap_alpha = -1,
 };
 
 static void drm_vec_plane_wait_vblank(void) {
@@ -324,6 +342,18 @@ static int drm_vec_plane_update_fb(const uint8_t *argb, unsigned width, unsigned
         }
     }
 
+    if (drm_vec_plane.strap_alpha > 0 && drm_vec_plane.strap_premultiplied) {
+        int blend_ret = ARGBBlend(drm_vec_plane.strap_premultiplied,
+                                  STRAP_WIDTH * 4,
+                                  pixels, pitch,
+                                  pixels, pitch,
+                                  out_w, out_h);
+        if (blend_ret != 0) {
+            fprintf(stderr, "drm-rp1-vec: strap blend failed: %d\n", blend_ret);
+            return -1;
+        }
+    }
+
 //    drm_vec_plane_wait_vblank();
     int ret = drmModeSetPlane(drm_vec_plane.fd, drm_vec_plane.plane_id,
                               drm_vec_plane.crtc_id, drm_vec_plane.fb_ids[target_index], DRM_MODE_PAGE_FLIP_EVENT,
@@ -347,7 +377,59 @@ static int drm_vec_plane_update_fb(const uint8_t *argb, unsigned width, unsigned
 }
 
 void load_strap(char *path) {
-    (void)path;
+    if (!path) {
+        return;
+    }
+
+    char *dot = strrchr(path, '.');
+    size_t base_length = dot ? (size_t)(dot - path) : strlen(path);
+    const char suffix[] = ".strap.png";
+    char *strap_path = malloc(base_length + sizeof(suffix));
+    if (!strap_path) {
+        fprintf(stderr, "drm-rp1-vec: strap path allocation failed\n");
+        return;
+    }
+    memcpy(strap_path, path, base_length);
+    memcpy(strap_path + base_length, suffix, sizeof(suffix));
+
+    Image image = {0};
+    if (!loadPNG(strap_path, &image) || !image.buffer ||
+        image.width <= 0 || image.height <= 0 ||
+        image.type != VC_IMAGE_RGBA32) {
+        fprintf(stderr, "drm-rp1-vec: unable to load strap %s\n", strap_path);
+        free(strap_path);
+        free(image.buffer);
+        return;
+    }
+    free(strap_path);
+
+    uint8_t *scaled_argb = malloc((size_t)STRAP_WIDTH * STRAP_HEIGHT * 4U);
+    if (!scaled_argb) {
+        fprintf(stderr, "drm-rp1-vec: strap pixel allocation failed\n");
+        free(image.buffer);
+        return;
+    }
+
+    int ret = ARGBScale(image.buffer + image.width / 16 * 8, image.pitch, image.width / 4 * 3, image.height,
+                        scaled_argb, STRAP_WIDTH * 4, STRAP_WIDTH, STRAP_HEIGHT,
+                        kFilterBilinear);
+    free(image.buffer);
+    if (ret != 0) {
+        fprintf(stderr, "drm-rp1-vec: strap scaling failed: %d\n", ret);
+        free(scaled_argb);
+        return;
+    }
+
+    free(drm_vec_plane.strap_pixels);
+    drm_vec_plane.strap_pixels = scaled_argb;
+    drm_vec_plane.strap_size = (size_t)STRAP_WIDTH * STRAP_HEIGHT * 4U;
+    free(drm_vec_plane.strap_premultiplied);
+    drm_vec_plane.strap_premultiplied = NULL;
+    free(drm_vec_plane.strap_alpha_mask);
+    drm_vec_plane.strap_alpha_mask = NULL;
+    drm_vec_plane.strap_alpha = -1;
+    printf("drm-rp1-vec: loaded strap %dx%d scaled to %dx%d\n",
+           image.width, image.height, STRAP_WIDTH, STRAP_HEIGHT);
 }
 
 void dispmanx_init(void) {
@@ -359,13 +441,71 @@ void dispmanx_display_argb(const uint8_t *argb, unsigned width, unsigned height)
 }
 
 void dispmanx_alpha(int a) {
-    (void)a;
+    if (a < 0) a = 0;
+    if (a > 255) a = 255;
+    if (a == drm_vec_plane.strap_alpha) {
+        return;
+    }
+    drm_vec_plane.strap_alpha = a;
+
+    free(drm_vec_plane.strap_premultiplied);
+    drm_vec_plane.strap_premultiplied = NULL;
+    free(drm_vec_plane.strap_alpha_mask);
+    drm_vec_plane.strap_alpha_mask = NULL;
+    if (!drm_vec_plane.strap_pixels || drm_vec_plane.strap_size == 0) {
+        return;
+    }
+
+    drm_vec_plane.strap_premultiplied = malloc(drm_vec_plane.strap_size);
+    drm_vec_plane.strap_alpha_mask = malloc(drm_vec_plane.strap_size);
+    if (!drm_vec_plane.strap_premultiplied || !drm_vec_plane.strap_alpha_mask) {
+        fprintf(stderr, "drm-rp1-vec: premultiplied strap allocation failed\n");
+        free(drm_vec_plane.strap_premultiplied);
+        free(drm_vec_plane.strap_alpha_mask);
+        drm_vec_plane.strap_premultiplied = NULL;
+        drm_vec_plane.strap_alpha_mask = NULL;
+        return;
+    }
+
+    memset(drm_vec_plane.strap_alpha_mask, (unsigned char)a,
+           drm_vec_plane.strap_size);
+    int ret = ARGBAttenuate(drm_vec_plane.strap_pixels, STRAP_WIDTH * 4,
+                            drm_vec_plane.strap_premultiplied, STRAP_WIDTH * 4,
+                            STRAP_WIDTH, STRAP_HEIGHT);
+    if (ret != 0) {
+        fprintf(stderr, "drm-rp1-vec: strap alpha attenuation failed: %d\n", ret);
+        free(drm_vec_plane.strap_premultiplied);
+        free(drm_vec_plane.strap_alpha_mask);
+        drm_vec_plane.strap_premultiplied = NULL;
+        drm_vec_plane.strap_alpha_mask = NULL;
+        return;
+    }
+
+    ret = ARGBMultiply(drm_vec_plane.strap_premultiplied, STRAP_WIDTH * 4,
+                       drm_vec_plane.strap_alpha_mask, STRAP_WIDTH * 4,
+                       drm_vec_plane.strap_premultiplied, STRAP_WIDTH * 4,
+                       STRAP_WIDTH, STRAP_HEIGHT);
+    if (ret != 0) {
+        fprintf(stderr, "drm-rp1-vec: strap global alpha multiply failed: %d\n", ret);
+        free(drm_vec_plane.strap_premultiplied);
+        free(drm_vec_plane.strap_alpha_mask);
+        drm_vec_plane.strap_premultiplied = NULL;
+        drm_vec_plane.strap_alpha_mask = NULL;
+    }
 }
 
 void blank_background(void) {
 }
 
 void dispmanx_close(void) {
+    free(drm_vec_plane.strap_pixels);
+    drm_vec_plane.strap_pixels = NULL;
+    drm_vec_plane.strap_size = 0;
+    free(drm_vec_plane.strap_premultiplied);
+    drm_vec_plane.strap_premultiplied = NULL;
+    free(drm_vec_plane.strap_alpha_mask);
+    drm_vec_plane.strap_alpha_mask = NULL;
+    drm_vec_plane.strap_alpha = -1;
     for (int i = 0; i < 2; ++i) {
         if (drm_vec_plane.fb_pixels_buf[i] != NULL) {
             munmap(drm_vec_plane.fb_pixels_buf[i], drm_vec_plane.fb_sizes[i]);
