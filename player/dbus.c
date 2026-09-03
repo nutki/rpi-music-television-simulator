@@ -374,7 +374,7 @@ int64_t dbus_seek(int64_t seek) {
 
 int64_t dbus_volume(int64_t vol) {
    if (!vlc_player) return -1;
-   int res = libvlc_audio_equalizer_set_preamp(equalizer, vol/100. + 6);
+   int res = libvlc_audio_equalizer_set_preamp(equalizer, vol/100. + 12);
    libvlc_media_player_set_equalizer(vlc_player, equalizer);
    return 0;
 }
