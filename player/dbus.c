@@ -67,7 +67,23 @@ static void recalculate_geometry(struct libvlc_frame_log *frame) {
    if (effective_crop_w > source_w - effective_crop_x) effective_crop_w = source_w - effective_crop_x;
    if (effective_crop_h > source_h - effective_crop_y) effective_crop_h = source_h - effective_crop_y;
 
-   if ((int64_t)effective_crop_w * aspect_y >= (int64_t)effective_crop_h * aspect_x) {
+   if (fill_frame) {
+      target_aspect_w = target_w;
+      target_aspect_h = target_h;
+      target_offset_w = 0;
+      target_offset_h = 0;
+      if ((int64_t)effective_crop_w * aspect_y >= (int64_t)effective_crop_h * aspect_x) {
+         // source is wider than target aspect
+         int new_w = (effective_crop_h * aspect_x / aspect_y + 1) & ~1;
+         if (effective_crop_w > new_w) effective_crop_x += (effective_crop_w - new_w)/2;
+         effective_crop_w = new_w;
+      } else {
+         // source is taller / narrower
+         int new_h = (effective_crop_w * aspect_y / aspect_x + 1) & ~1;
+         if (effective_crop_h > new_h) effective_crop_y += (effective_crop_h - new_h)/2;
+         effective_crop_h = new_h;
+      }
+   } else if ((int64_t)effective_crop_w * aspect_y >= (int64_t)effective_crop_h * aspect_x) {
       // source is wider than target aspect
       target_aspect_w = target_w;
       target_aspect_h = (int64_t)target_h * aspect_x * effective_crop_h
@@ -386,6 +402,7 @@ int64_t dbus_crop(int x, int y, int w, int h) {
 int64_t dbus_aspect_mode(const char *mode) {
    if (!vlc_player) return -1;
    fill_frame = strcmp(mode, "fill") == 0;
+   recalculate_geometry(&libvlc_frame_log);
    return 0;
 }
 
