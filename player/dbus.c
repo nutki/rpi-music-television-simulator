@@ -14,6 +14,7 @@
 
 static libvlc_instance_t *vlc_instance;
 static libvlc_media_player_t *vlc_player;
+static libvlc_equalizer_t *equalizer;
 
 struct libvlc_frame_log {
    unsigned width;
@@ -257,6 +258,7 @@ static void libvlc_ensure(void) {
    }
    if (!vlc_player && vlc_instance) {
       vlc_player = libvlc_media_player_new(vlc_instance);
+      equalizer = libvlc_audio_equalizer_new();
       libvlc_video_set_callbacks(vlc_player, libvlc_log_lock,
                                  libvlc_log_unlock, libvlc_log_display,
                                  &libvlc_frame_log);
@@ -265,25 +267,14 @@ static void libvlc_ensure(void) {
    }
 }
 
-static int libvlc_volume_from_correction(int volume_correction) {
-   double linear = 100.0 * pow(10.0, (double)volume_correction / 2000.0);
-   if (linear < 0.0) return 0;
-   return (int)lround(linear);
-}
-
-int libvlc_open_file(const char *path, int64_t start_us, int volume_correction) {
+int libvlc_open_file(const char *path, int64_t start_us) {
    if (!path) return -1;
    libvlc_ensure();
    if (!vlc_player) return -1;
    libvlc_media_t *media = libvlc_media_new_path(vlc_instance, path);
    if (!media) return -1;
 
-   char volume_option[128];
    char start_option[128];
-   int vol = libvlc_volume_from_correction(volume_correction);
-   snprintf(volume_option, sizeof(volume_option), ":volume=%d", vol);
-   libvlc_media_add_option(media, volume_option);
-
    if (start_us > 0) {
       snprintf(start_option, sizeof(start_option), ":start-time=%lld", start_us / 1000000LL);
       libvlc_media_add_option(media, start_option);
@@ -383,10 +374,9 @@ int64_t dbus_seek(int64_t seek) {
 
 int64_t dbus_volume(int64_t vol) {
    if (!vlc_player) return -1;
-   int v = libvlc_volume_from_correction((int)vol);
-   int res = libvlc_audio_set_volume(vlc_player, v);
-   printf("Corrected volume: %lld = %d result is %d\n", vol, v, res);
-   return v;
+   int res = libvlc_audio_equalizer_set_preamp(equalizer, vol/100. + 6);
+   libvlc_media_player_set_equalizer(vlc_player, equalizer);
+   return 0;
 }
 
 int64_t dbus_crop(int x, int y, int w, int h) {
