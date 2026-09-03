@@ -160,7 +160,9 @@ bool loadPNG(const char *f_name, Image *image)
 	}
 
 	//---------------------------------------------------------------------
-
+#ifdef USE_LIBVLC
+	png_set_bgr(png_ptr);
+#endif
 	png_read_image(png_ptr, row_pointers);
 
 	//---------------------------------------------------------------------
