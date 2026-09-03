@@ -34,6 +34,8 @@ static unsigned target_aspect_w;
 static unsigned target_aspect_h;
 static unsigned target_offset_h;
 static unsigned target_offset_w;
+static unsigned effective_crop_x, effective_crop_y, effective_crop_w, effective_crop_h;
+static unsigned dirty_buffers = 0;
 
 static void libvlc_log_cleanup(void *opaque) {
    struct libvlc_frame_log *frame = opaque;
@@ -56,31 +58,32 @@ static void recalculate_geometry(struct libvlc_frame_log *frame) {
    unsigned source_w = frame->width;
    unsigned source_h = frame->height;
    if (!source_w || !source_h) return;
-   if (crop_x < 0) crop_x = 0;
-   if (crop_y < 0) crop_y = 0;
-   if (crop_w < 0 || crop_w > source_w) crop_w = source_w;
-   if (crop_h < 0 || crop_h > source_h) crop_h = source_h;
-   if (crop_x & 1) crop_x--;
-   if (crop_y & 1) crop_y--;
-   if (crop_w & 1) crop_w++;
-   if (crop_h & 1) crop_h++;
+   effective_crop_x = crop_x < 0 ? 0 : crop_x & ~1;
+   effective_crop_y = crop_y < 0 ? 0 : crop_y & ~1;
+   effective_crop_w = crop_w < 0 ? source_w : (crop_w + 1) & ~1;
+   effective_crop_h = crop_h < 0 ? source_h : (crop_h + 1) & ~1;
+   if (effective_crop_x > source_w) effective_crop_x = source_w;
+   if (effective_crop_y > source_h) effective_crop_y = source_h;
+   if (effective_crop_w > source_w - effective_crop_x) effective_crop_w = source_w - effective_crop_x;
+   if (effective_crop_h > source_h - effective_crop_y) effective_crop_h = source_h - effective_crop_y;
 
-   if ((int64_t)crop_w * aspect_y >= (int64_t)crop_h * aspect_x) {
+   if ((int64_t)effective_crop_w * aspect_y >= (int64_t)effective_crop_h * aspect_x) {
       // source is wider than target aspect
       target_aspect_w = target_w;
-      target_aspect_h = (int64_t)target_h * aspect_x * crop_h
-                     / ((int64_t)aspect_y * crop_w);
+      target_aspect_h = (int64_t)target_h * aspect_x * effective_crop_h
+                     / ((int64_t)aspect_y * effective_crop_w);
       target_offset_h = (target_h - target_aspect_h) / 2;
       target_offset_w = 0;
    } else {
       // source is taller / narrower
       target_aspect_h = target_h;
-      target_aspect_w = (int64_t)target_w * aspect_y * crop_w
-                     / ((int64_t)aspect_x * crop_h);
+      target_aspect_w = (int64_t)target_w * aspect_y * effective_crop_w
+                     / ((int64_t)aspect_x * effective_crop_h);
       target_offset_w = (target_w - target_aspect_w) / 2;
       target_offset_h = 0;
    }
-   printf("%d %d %d %d %d\n", source_h, crop_y, crop_h, target_aspect_h, target_offset_h);
+   if (target_aspect_w < target_w || target_aspect_h < target_h) dirty_buffers = 1;
+   printf("%d %d %d %d %d\n", source_h, effective_crop_y, effective_crop_h, target_aspect_h, target_offset_h);
    printf("aspect corrected size: %dx%d\n", target_aspect_w, target_aspect_h);
 }
 
@@ -203,10 +206,14 @@ static void libvlc_log_unlock(void *opaque, void *picture, void *const *planes) 
    unsigned y_stride = frame->width;
    unsigned uv_stride = (frame->width + 1U) / 2U;
    unsigned target_stride = target_w * 4U;
-   int r1 = I420Scale((const uint8_t *)planes[0] + crop_x + crop_y * y_stride, y_stride,
-                      (const uint8_t *)planes[1] + crop_x/2 + crop_y/2 * uv_stride, uv_stride,
-                      (const uint8_t *)planes[2] + crop_x/2 + crop_y/2 * uv_stride, uv_stride,
-                      crop_w, crop_h,
+   if (dirty_buffers) {
+      dirty_buffers = 0;
+      memset(rgb_buffer, 0, sizeof(rgb_buffer));
+   }
+   int r1 = I420Scale((const uint8_t *)planes[0] + effective_crop_x + effective_crop_y * y_stride, y_stride,
+                      (const uint8_t *)planes[1] + effective_crop_x/2 + effective_crop_y/2 * uv_stride, uv_stride,
+                      (const uint8_t *)planes[2] + effective_crop_x/2 + effective_crop_y/2 * uv_stride, uv_stride,
+                      effective_crop_w, effective_crop_h,
                       tmp_y, target_y_stride,
                       tmp_u, target_uv_stride,
                       tmp_v, target_uv_stride,
@@ -367,7 +374,7 @@ int64_t dbus_volume(int64_t vol) {
 }
 
 int64_t dbus_crop(int x, int y, int w, int h) {
-   printf("Setting crop geometry: %d,%d,%d,%d\n", x, y, w-x, h-y);
+   printf("Setting crop geometry: %d,%d,%d,%d\n", x, y, w, h);
    crop_x = x;
    crop_y = y;
    crop_w = w < 0 ? w : w - x;
