@@ -305,7 +305,7 @@ static int64_t monotonic_us(void) {
            ts.tv_nsec / 1000;
 }
 static int64_t libvlc_query(const char *property) {
-   static int last_pos;
+   static int last_pos = -1;
    static int64_t last_time;
    if (!vlc_player) return -1;
    if (!strcmp(property, "Duration")) {
