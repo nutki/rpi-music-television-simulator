@@ -37,6 +37,7 @@ static unsigned target_offset_h;
 static unsigned target_offset_w;
 static unsigned effective_crop_x, effective_crop_y, effective_crop_w, effective_crop_h;
 static unsigned dirty_buffers = 0;
+static int stop_requested = 0;
 
 static void libvlc_log_cleanup(void *opaque) {
    struct libvlc_frame_log *frame = opaque;
@@ -109,6 +110,7 @@ static unsigned libvlc_log_format(void **opaque, char *chroma,
                                   unsigned *pitches, unsigned *lines) {
    struct libvlc_frame_log *frame = opaque ? *opaque : &libvlc_frame_log;
    if (!frame) frame = &libvlc_frame_log;
+   stop_requested = 0;
 
    printf("libvlc: format callback: chroma=%4.4s width=%u height=%u\n",
           chroma ? chroma : "????", width ? *width : 0, height ? *height : 0);
@@ -243,6 +245,10 @@ static void libvlc_log_unlock(void *opaque, void *picture, void *const *planes) 
    if (ret == 0) {
       // printf("libvlc: converted %ux%u %s frame to ARGB via libyuv\n",
       //        frame->width, frame->height, frame->chroma[0] ? frame->chroma : "I420");
+     if (stop_requested) {
+       bg_mode(-1);
+       return;
+     }
      dispmanx_display_argb((uint8_t*)rgb_buffer, target_w, target_h);
    }
 }
@@ -340,6 +346,7 @@ int64_t dbus_action(char *action_name) {
    libvlc_ensure();
    if (!vlc_player) return -1;
    if (!strcmp(action_name, "Stop")) {
+      stop_requested = 1;
       libvlc_media_player_stop(vlc_player);
       return 0;
    }

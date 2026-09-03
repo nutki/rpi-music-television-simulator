@@ -468,7 +468,10 @@ void dispmanx_alpha(int a) {
               STRAP_WIDTH, STRAP_HEIGHT, alpha_mult);
 }
 
+uint32_t black_bg[720*576], blue_bg[720*576], random_bg[720*576 + 0xfff];
 void blank_background(void) {
+    for(int i = 0; i < 720*576; i++) blue_bg[i] = 0xFF0000FF;
+    for(int i = 0; i < 720*576 + 0xfff; i++) random_bg[i] = 0x01010101 * (rand() & 0xff);
 }
 
 void dispmanx_close(void) {
@@ -563,7 +566,11 @@ void osd_text_clear(void) {
 }
 
 void bg_mode(int mode) {
-    (void)mode;
+    static int last_mode = 0;
+    if (mode < 0) mode = last_mode;
+    int32_t *src = mode == 2 ? random_bg + (rand() & 0xFFF) : mode == 1 ? blue_bg : black_bg;
+    drm_vec_plane_update_fb((uint8_t*)src, 720, 576);
+    last_mode = mode;
 }
 
 char *dispmanx_shifted_window(void) {
