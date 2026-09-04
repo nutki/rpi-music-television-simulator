@@ -1,6 +1,7 @@
 #if defined(USE_LIBVLC)
 
 #include <stddef.h>
+#include "preview_shm.h"
 
 int teletext_init(void) {
     return 0;
@@ -10,15 +11,15 @@ void teletext_close(void) {
 }
 
 void teletext_set_video_filename(char *fname) {
-    (void)fname;
+    preview_shm_publish_name(fname);
 }
 
 void teletext_set_video_position(int pos) {
-    (void)pos;
+    preview_shm_publish_position(pos);
 }
 
 void teletext_set_video_duration(int d) {
-    (void)d;
+    preview_shm_publish_duration(d);
 }
 
 #else

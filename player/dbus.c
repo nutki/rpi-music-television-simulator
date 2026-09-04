@@ -11,6 +11,7 @@
 #include <time.h>
 #include "dbus.h"
 #include "dispmanx.h"
+#include "preview_shm.h"
 
 static libvlc_instance_t *vlc_instance;
 static libvlc_media_player_t *vlc_player;
@@ -29,15 +30,21 @@ static int fill_frame = 0;
 static int crop_x = -1, crop_y = -1, crop_w = -1, crop_h = -1;
 static struct libvlc_frame_log libvlc_frame_log = { 0 };
 static unsigned target_w = 720, target_h = 576;
-static int aspect_x = 4;
-static int aspect_y = 3;
 static unsigned target_aspect_w;
 static unsigned target_aspect_h;
 static unsigned target_offset_h;
 static unsigned target_offset_w;
+static unsigned target_aspect_pw;
+static unsigned target_aspect_ph;
+static unsigned target_offset_ph;
+static unsigned target_offset_pw;
 static unsigned effective_crop_x, effective_crop_y, effective_crop_w, effective_crop_h;
-static unsigned dirty_buffers = 0;
+static unsigned effective_wcrop_x, effective_wcrop_y, effective_wcrop_w, effective_wcrop_h;
+static unsigned dirty_buffers = 0, dirty_preview_buffers = 0;
 static int stop_requested = 0;
+#define PREVIEW_W 86
+#define PREVIEW_H 48
+static uint8_t preview[PREVIEW_W * PREVIEW_H];
 
 static void libvlc_log_cleanup(void *opaque) {
    struct libvlc_frame_log *frame = opaque;
@@ -51,56 +58,75 @@ static void libvlc_log_cleanup(void *opaque) {
    frame->chroma[0] = '\0';
    printf("libvlc: cleanup callback\n");
 }
-// Setting crop geometry: 0,45,480,270
-// crop corrected: 0,44,320,258
-// 258 44 258 576 0
-// crop corrected: 0,0,320,258
-// 258 0 258 576 0
+static void get_target_geometry(unsigned target_w, unsigned target_h,
+      int aspect_x, int aspect_y,
+      unsigned *target_aspect_w, unsigned *target_aspect_h,
+      unsigned *target_offset_w, unsigned *target_offset_h) {
+   if (fill_frame) {
+      *target_aspect_w = target_w;
+      *target_aspect_h = target_h;
+      *target_offset_w = 0;
+      *target_offset_h = 0;
+   } else if ((int64_t)effective_crop_w * aspect_y >= (int64_t)effective_crop_h * aspect_x) {
+      // source is wider than target aspect
+      *target_aspect_w = target_w;
+      *target_aspect_h = (int64_t)target_h * aspect_x * effective_crop_h
+                     / ((int64_t)aspect_y * effective_crop_w);
+      *target_offset_h = (target_h - *target_aspect_h) / 2;
+      *target_offset_w = 0;
+   } else {
+      // source is taller / narrower
+      *target_aspect_h = target_h;
+      *target_aspect_w = (int64_t)target_w * aspect_y * effective_crop_w
+                     / ((int64_t)aspect_x * effective_crop_h);
+      *target_offset_w = (target_w - *target_aspect_w) / 2;
+      *target_offset_h = 0;
+   }
+}
+static void get_source_geometry(int source_w, int source_h,
+      int aspect_x, int aspect_y,
+      unsigned *effective_crop_x, unsigned *effective_crop_y,
+      unsigned *effective_crop_w, unsigned *effective_crop_h) {
+   *effective_crop_x = crop_x < 0 ? 0 : crop_x & ~1;
+   *effective_crop_y = crop_y < 0 ? 0 : crop_y & ~1;
+   *effective_crop_w = crop_w < 0 ? source_w : (crop_w + 1) & ~1;
+   *effective_crop_h = crop_h < 0 ? source_h : (crop_h + 1) & ~1;
+   if (*effective_crop_x > source_w) *effective_crop_x = source_w;
+   if (*effective_crop_y > source_h) *effective_crop_y = source_h;
+   if (*effective_crop_w > source_w - *effective_crop_x) *effective_crop_w = source_w - *effective_crop_x;
+   if (*effective_crop_h > source_h - *effective_crop_y) *effective_crop_h = source_h - *effective_crop_y;
+   if (fill_frame) {
+      if ((int64_t)*effective_crop_w * aspect_y >= (int64_t)*effective_crop_h * aspect_x) {
+         // source is wider than target aspect
+         int new_w = (*effective_crop_h * aspect_x / aspect_y + 1) & ~1;
+         if (*effective_crop_w > new_w) *effective_crop_x += (*effective_crop_w - new_w)/2;
+         *effective_crop_w = new_w;
+      } else {
+         // source is taller / narrower
+         int new_h = (*effective_crop_w * aspect_y / aspect_x + 1) & ~1;
+         if (*effective_crop_h > new_h) *effective_crop_y += (*effective_crop_h - new_h)/2;
+         *effective_crop_h = new_h;
+      }
+   }
+}
 static void recalculate_geometry(struct libvlc_frame_log *frame) {
    unsigned source_w = frame->width;
    unsigned source_h = frame->height;
    if (!source_w || !source_h) return;
-   effective_crop_x = crop_x < 0 ? 0 : crop_x & ~1;
-   effective_crop_y = crop_y < 0 ? 0 : crop_y & ~1;
-   effective_crop_w = crop_w < 0 ? source_w : (crop_w + 1) & ~1;
-   effective_crop_h = crop_h < 0 ? source_h : (crop_h + 1) & ~1;
-   if (effective_crop_x > source_w) effective_crop_x = source_w;
-   if (effective_crop_y > source_h) effective_crop_y = source_h;
-   if (effective_crop_w > source_w - effective_crop_x) effective_crop_w = source_w - effective_crop_x;
-   if (effective_crop_h > source_h - effective_crop_y) effective_crop_h = source_h - effective_crop_y;
-
-   if (fill_frame) {
-      target_aspect_w = target_w;
-      target_aspect_h = target_h;
-      target_offset_w = 0;
-      target_offset_h = 0;
-      if ((int64_t)effective_crop_w * aspect_y >= (int64_t)effective_crop_h * aspect_x) {
-         // source is wider than target aspect
-         int new_w = (effective_crop_h * aspect_x / aspect_y + 1) & ~1;
-         if (effective_crop_w > new_w) effective_crop_x += (effective_crop_w - new_w)/2;
-         effective_crop_w = new_w;
-      } else {
-         // source is taller / narrower
-         int new_h = (effective_crop_w * aspect_y / aspect_x + 1) & ~1;
-         if (effective_crop_h > new_h) effective_crop_y += (effective_crop_h - new_h)/2;
-         effective_crop_h = new_h;
-      }
-   } else if ((int64_t)effective_crop_w * aspect_y >= (int64_t)effective_crop_h * aspect_x) {
-      // source is wider than target aspect
-      target_aspect_w = target_w;
-      target_aspect_h = (int64_t)target_h * aspect_x * effective_crop_h
-                     / ((int64_t)aspect_y * effective_crop_w);
-      target_offset_h = (target_h - target_aspect_h) / 2;
-      target_offset_w = 0;
-   } else {
-      // source is taller / narrower
-      target_aspect_h = target_h;
-      target_aspect_w = (int64_t)target_w * aspect_y * effective_crop_w
-                     / ((int64_t)aspect_x * effective_crop_h);
-      target_offset_w = (target_w - target_aspect_w) / 2;
-      target_offset_h = 0;
-   }
+   get_source_geometry(source_w, source_h, 4, 3,
+         &effective_crop_x, &effective_crop_y,
+         &effective_crop_w, &effective_crop_h);
+   get_source_geometry(source_w, source_h, 16, 9,
+         &effective_wcrop_x, &effective_wcrop_y,
+         &effective_wcrop_w, &effective_wcrop_h);
+   get_target_geometry(target_w, target_h, 4, 3,
+         &target_aspect_w, &target_aspect_h,
+         &target_offset_w, &target_offset_h);
+   get_target_geometry(PREVIEW_W, PREVIEW_H, 16, 9,
+         &target_aspect_pw, &target_aspect_ph,
+         &target_offset_pw, &target_offset_ph);
    if (target_aspect_w < target_w || target_aspect_h < target_h) dirty_buffers = 1;
+   if (target_aspect_pw < PREVIEW_W || target_aspect_ph < PREVIEW_H) dirty_preview_buffers = 1;
    printf("%d %d %d %d %d\n", source_h, effective_crop_y, effective_crop_h, target_aspect_h, target_offset_h);
    printf("aspect corrected size: %dx%d\n", target_aspect_w, target_aspect_h);
 }
@@ -229,6 +255,15 @@ static void libvlc_log_unlock(void *opaque, void *picture, void *const *planes) 
       dirty_buffers = 0;
       memset(rgb_buffer, 0, sizeof(rgb_buffer));
    }
+   if (dirty_preview_buffers) {
+      dirty_preview_buffers = 0;
+      memset(preview, 0, sizeof(preview));
+   }
+   ScalePlane(planes[0] + effective_wcrop_x + effective_wcrop_y * y_stride, y_stride,
+      effective_wcrop_w, effective_wcrop_h,
+      preview + PREVIEW_W * target_offset_ph, PREVIEW_W,
+      target_aspect_pw, target_aspect_ph, kFilterBilinear);
+   preview_shm_publish(preview, target_aspect_pw);
    int r1 = I420Scale((const uint8_t *)planes[0] + effective_crop_x + effective_crop_y * y_stride, y_stride,
                       (const uint8_t *)planes[1] + effective_crop_x/2 + effective_crop_y/2 * uv_stride, uv_stride,
                       (const uint8_t *)planes[2] + effective_crop_x/2 + effective_crop_y/2 * uv_stride, uv_stride,
@@ -335,6 +370,8 @@ static int64_t libvlc_query(const char *property) {
 }
 
 void dbus_init(void) {
+   preview_shm_init();
+   atexit(preview_shm_close);
    libvlc_ensure();
 }
 
