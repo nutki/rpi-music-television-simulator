@@ -29,7 +29,7 @@ struct libvlc_frame_log {
 static int fill_frame = 0;
 static int crop_x = -1, crop_y = -1, crop_w = -1, crop_h = -1;
 static struct libvlc_frame_log libvlc_frame_log = { 0 };
-static unsigned target_w = 720, target_h = 576;
+static unsigned target_w = 822, target_h = 576;
 static unsigned target_aspect_w;
 static unsigned target_aspect_h;
 static unsigned target_offset_h;
@@ -233,7 +233,6 @@ static void libvlc_log_unlock(void *opaque, void *picture, void *const *planes) 
    if (frame->plane_count == 1) {
       printf("libvlc: packed frame chroma=%s width=%u height=%u -> display directly\n",
              frame->chroma[0] ? frame->chroma : "????", frame->width, frame->height);
-      dispmanx_display_argb((const uint8_t *)planes[0], frame->width, frame->height);
       return;
    }
 
@@ -244,7 +243,7 @@ static void libvlc_log_unlock(void *opaque, void *picture, void *const *planes) 
    unsigned target_y_stride = target_w;
    unsigned target_uv_stride = (target_w + 1u)/2u;
    unsigned target_uv_h = (target_h + 1u)/2u;
-   static uint8_t tmp_buf[720 * 576 * 4], rgb_buffer[720 * 576 * 4];
+   static uint8_t tmp_buf[822 * 576 * 4], rgb_buffer[822 * 576 * 4];
    //uint8_t tmp_buf[target_y_stride * target_h + target_uv_stride * target_uv_h * 2];
    uint8_t *tmp_y = tmp_buf, *tmp_u = tmp_y + target_y_stride * target_h, *tmp_v = tmp_u + target_uv_stride * target_uv_h;
    //uint32_t rgb_buffer[target_w * target_h * 10];
