@@ -19,6 +19,7 @@
 #include <drm_fourcc.h>
 #include "image.h"
 #include "vcrfont.h"
+#include "teletext.h"
 #include <libyuv.h>
 
 extern bool loadPNG(const char *f_name, Image *image);
@@ -479,33 +480,38 @@ static int drm_vec_plane_prepare_buffer(unsigned out_w, unsigned out_h, int inde
 
     return 0;
 }
-static uint8_t tt_source[370] = { 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1,1, 0, 0, 1,1, 0, 0, 1,1, 0, 0, 1,1, 0, 0, 1,1, 0, 0, 1,1, 0, 0, 1,1, 0, 0, 1,1, 0, 0, 1,1, 0, 0, 1,1, 0, 0, 1,1, 0, 0, 1 };
+static uint8_t tt_source[370] = { 0 };
+void copy_packet(const uint8_t *src, uint8_t *dest) {
+    int n, m;
+    for (n=0; n<42 + 4; n++) {
+        uint8_t b = *src++;
+        for (m=0; m<8; m++) {
+            *dest++ = b&1;
+            b = b>>1;
+        }
+    }
+}
+
 static void overlay_teletext(uint8_t *argb) {
-    uint32_t *pixels = (uint32_t *)argb;
-    uint32_t white = 0x00ffffff;
     int pitch = 822 * 4;
-    static int cc = 0;
-    for (int y = 2; y < 16; y++) {
-        uint32_t *row = (uint32_t *)((uint8_t *)pixels + y * pitch);
-        tt_source[30] = cc&1;
-        tt_source[31] = (cc>>1)&1;
-        tt_source[32] = (cc>>2)&1;
-        tt_source[33] = (cc>>3)&1;
-        tt_source[34] = (cc>>4)&1;
-        tt_source[35] = (cc>>5)&1;
-        tt_source[36] = (cc>>6)&1;
-        tt_source[37] = (cc>>7)&1;
-        cc++;
+    for (int y = 0; y < 15; y++) {
+        int line_map[15] = {
+            1, 3, 5, 7, 9, 11, 13, 15,
+               2, 4, 6, 8, 10, 12, 14,
+        };
+        uint32_t *row = (uint32_t *)((uint8_t *)argb + line_map[y] * pitch);
+        uint8_t packet[42 + 4] = { 0, 0x55, 0x55, 0x27 };
+        teletext_get_packet(packet + 4);
+        copy_packet(packet, tt_source);
         for (int x = 0; x < 822; x++) {
-            const uint8_t *source_row = tt_source;
             // ratio = pixel clock = 108Mhz/7 / teletext data clock  = 6.9375Mhz = 2.2239...
             // offset (real data (clock runin) starts at 8)
             int source_x = x/2.223938223938224 + 6;
-            int v = source_x < 370 ? source_row[source_x] : 0;
-            row[x] = v ? (0xff000000 | white) : 0xff000000;
+            int v = source_x < 370 ? tt_source[source_x] : 0;
+            row[x] = v ? 0xffffffff : 0xff000000;
         }
     }
-
+    teletext_request_packets(15);
 }
 
 static int drm_vec_plane_update_fb(const uint8_t *argb, unsigned width, unsigned height) {
@@ -560,7 +566,7 @@ static int drm_vec_plane_update_fb(const uint8_t *argb, unsigned width, unsigned
             return -1;
         }
     }
-//    overlay_teletext(pixels + tt_offset * 5);
+   overlay_teletext(pixels + tt_offset * 0);
 
 //    drm_vec_plane_wait_vblank();
     int ret = drmModeSetPlane(drm_vec_plane.fd, drm_vec_plane.plane_id,
@@ -618,10 +624,10 @@ static void *drm_vec_display_loop(void *unused) {
                          (double)(now.tv_nsec - last_report.tv_nsec) / 1000000000.0;
         if (elapsed >= 1.0) {
                         report_vlc = vlc_submitted;
-                //         printf("drm-rp1-vec: vlc fps=%.2f output fps=%.2f flips=%llu\n",
-                //                      (double)report_vlc / elapsed,
-                //    (double)report_flips / elapsed,
-                //  (unsigned long long)display_flips);
+                        printf("drm-rp1-vec: vlc fps=%.2f output fps=%.2f flips=%llu\n",
+                                     (double)report_vlc / elapsed,
+                   (double)report_flips / elapsed,
+                 (unsigned long long)display_flips);
              vlc_submitted = 0;
             report_flips = 0;
             last_report = now;
