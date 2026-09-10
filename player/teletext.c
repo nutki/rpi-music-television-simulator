@@ -86,7 +86,7 @@ void teletext_request_packets(int count) {
     char buf[20];
     sprintf(buf, "T%d\n", count);
     int r = write(teletext_fd, buf, strlen(buf));
-    if (r < 0) teletext_fd = 0;
+    if (r < 0) teletext_fd = -1;
 }
 
 #else
