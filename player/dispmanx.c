@@ -102,6 +102,7 @@ struct display_frame {
     unsigned height;
     int valid;
     int busy;
+    int from_vlc;
 };
 
 static struct display_frame display_frame;
@@ -551,7 +552,7 @@ static void wait_for_flip(int fd)
         check(drmHandleEvent(fd, &event), "drmHandleEvent");
     }
 }
-static int drm_vec_plane_update_fb(const uint8_t *argb, unsigned width, unsigned height) {
+static int drm_vec_plane_update_fb(const uint8_t *argb, unsigned width, unsigned height, int from_vlc) {
     if (!argb || width == 0 || height == 0) {
         return -1;
     }
@@ -580,7 +581,7 @@ static int drm_vec_plane_update_fb(const uint8_t *argb, unsigned width, unsigned
         }
     }
 
-    if (drm_vec_plane.strap_alpha > 0) {
+    if (drm_vec_plane.strap_alpha > 0 && from_vlc) {
         int blend_ret = ARGBBlend(strap_premultiplied,
                                   STRAP_WIDTH * 4,
                                   pixels + tt_offset, pitch,
@@ -654,7 +655,8 @@ static void *drm_vec_display_loop(void *unused) {
             display_frame.busy = 1;
             int ret = drm_vec_plane_update_fb(display_frame.pixels,
                                               display_frame.width,
-                                              display_frame.height);
+                                              display_frame.height,
+                                              display_frame.from_vlc);
             if (ret == 0) {
                 display_flips++;
                 report_flips++;
@@ -703,6 +705,7 @@ static int drm_vec_submit_frame(const uint8_t *argb, unsigned width,
     display_frame.width = width;
     display_frame.height = height;
     display_frame.valid = 1;
+    display_frame.from_vlc = from_vlc;
     if (from_vlc) {
         vlc_submitted++;
     }
@@ -778,6 +781,7 @@ void dispmanx_init(void) {
     display_frame.height = STRAP_HEIGHT;
     display_frame.valid = 0;
     display_frame.busy = 0;
+    display_frame.from_vlc = 0;
     display_thread_stop = 0;
     if (pthread_create(&display_thread, NULL, drm_vec_display_loop, NULL) != 0) {
         fprintf(stderr, "drm-rp1-vec: display thread creation failed\n");
@@ -835,6 +839,7 @@ void dispmanx_close(void) {
     display_frame.pixels = NULL;
     display_frame.valid = 0;
     display_frame.busy = 0;
+    display_frame.from_vlc = 0;
     free(drm_vec_plane.strap_pixels);
     drm_vec_plane.strap_pixels = NULL;
     drm_vec_plane.strap_alpha = -1;
