@@ -492,17 +492,25 @@ void copy_packet(const uint8_t *src, uint8_t *dest) {
     }
 }
 
-static void overlay_teletext(uint8_t *argb) {
+static void overlay_teletext(uint8_t *argb, int field) {
     int pitch = 822 * 4;
+    static uint8_t packets[15][42 + 4];
+    int cnt = 0;
     for (int y = 0; y < 15; y++) {
         int line_map[15] = {
             1, 3, 5, 7, 9, 11, 13, 15,
                2, 4, 6, 8, 10, 12, 14,
         };
-        uint32_t *row = (uint32_t *)((uint8_t *)argb + line_map[y] * pitch);
-        uint8_t packet[42 + 4] = { 0, 0x55, 0x55, 0x27 };
-        teletext_get_packet(packet + 4);
-        copy_packet(packet, tt_source);
+        uint32_t *row = (uint32_t *)((uint8_t *)argb + (line_map[y]) * pitch);
+        packets[y][0] = 0;
+        packets[y][1] = 0x55;
+        packets[y][2] = 0x55;
+        packets[y][3] = 0x27;
+        if (field != line_map[y]%2) {
+            teletext_get_packet(packets[y] + 4);
+            cnt++;
+        }
+        copy_packet(packets[y], tt_source);
         for (int x = 0; x < 822; x++) {
             // ratio = pixel clock = 108Mhz/7 / teletext data clock  = 6.9375Mhz = 2.2239...
             // offset (real data (clock runin) starts at 8)
@@ -511,9 +519,38 @@ static void overlay_teletext(uint8_t *argb) {
             row[x] = v ? 0xffffffff : 0xff000000;
         }
     }
-    teletext_request_packets(15);
+    teletext_request_packets(cnt);
 }
 
+static int complete = 0;
+static void page_flip_handler(int fd, unsigned int frame,
+                              unsigned int seconds, unsigned int useconds,
+                              void *data)
+{
+    (void)fd;
+    (void)frame;
+    (void)seconds;
+    (void)useconds;
+    complete = 1;
+}
+static void check(int result, const char *message)
+{
+    if (result < 0) perror(message);
+}
+#include <poll.h>
+static void wait_for_flip(int fd)
+{
+    drmEventContext event = {0};
+    struct pollfd pollfd = {fd, POLLIN, 0};
+
+    event.version = DRM_EVENT_CONTEXT_VERSION;
+    event.page_flip_handler = page_flip_handler;
+    complete = 0;
+    while (!complete) {
+        check(poll(&pollfd, 1, -1), "poll DRM page flip");
+        check(drmHandleEvent(fd, &event), "drmHandleEvent");
+    }
+}
 static int drm_vec_plane_update_fb(const uint8_t *argb, unsigned width, unsigned height) {
     if (!argb || width == 0 || height == 0) {
         return -1;
@@ -566,15 +603,22 @@ static int drm_vec_plane_update_fb(const uint8_t *argb, unsigned width, unsigned
             return -1;
         }
     }
-   overlay_teletext(pixels + tt_offset * 0);
+   overlay_teletext(pixels + tt_offset * 0, target_index);
 
 //    drm_vec_plane_wait_vblank();
-    int ret = drmModeSetPlane(drm_vec_plane.fd, drm_vec_plane.plane_id,
-                              drm_vec_plane.crtc_id, drm_vec_plane.fb_ids[target_index], DRM_MODE_PAGE_FLIP_EVENT,
-                              0, 0, out_w, out_h,
-                              0, 0, out_w << 16, out_h << 16);
-    if (ret != 0) {
-        fprintf(stderr, "drm-rp1-vec: drmModeSetPlane failed: %d\n", ret);
+    // int ret = drmModeSetPlane(drm_vec_plane.fd, drm_vec_plane.plane_id,
+    //                           drm_vec_plane.crtc_id, drm_vec_plane.fb_ids[target_index], DRM_MODE_PAGE_FLIP_EVENT * 0,
+    //                           0, 0, out_w, out_h,
+    //                           0, 0, out_w << 16, out_h << 16);
+    // if (ret != 0) {
+    //     fprintf(stderr, "drm-rp1-vec: drmModeSetPlane failed: %d\n", ret);
+    //     return -1;
+    // }
+    int ret2 = drmModePageFlip(drm_vec_plane.fd, drm_vec_plane.crtc_id,
+                              drm_vec_plane.fb_ids[target_index],
+                        DRM_MODE_PAGE_FLIP_EVENT, 0);
+    if (ret2 != 0) {
+        fprintf(stderr, "drm-rp1-vec: drmModePageFlip failed: %d\n", ret2);
         return -1;
     }
 
@@ -598,7 +642,8 @@ static void *drm_vec_display_loop(void *unused) {
     uint64_t report_vlc = 0;
 
     for (;;) {
-        drm_vec_plane_wait_vblank();
+//        drm_vec_plane_wait_vblank();
+        int can_wait = 0;
         pthread_mutex_lock(&display_mutex);
         if (display_thread_stop) {
             pthread_mutex_unlock(&display_mutex);
@@ -613,6 +658,7 @@ static void *drm_vec_display_loop(void *unused) {
             if (ret == 0) {
                 display_flips++;
                 report_flips++;
+                can_wait = 1;
             }
             display_frame.busy = 0;
             pthread_cond_signal(&display_buffer_free);
@@ -633,6 +679,7 @@ static void *drm_vec_display_loop(void *unused) {
             last_report = now;
         }
         pthread_mutex_unlock(&display_mutex);
+       if (can_wait) wait_for_flip(drm_vec_plane.fd); else usleep(5000);
     }
     return NULL;
 }
