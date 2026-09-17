@@ -32,7 +32,7 @@ extern bool loadPNG(const char *f_name, Image *image);
 #define OSD_OFFSET_X ((822 - 700)/2)
 #define OSD_TARGET_HEIGHT 48
 #define OSD_OFFSET_Y 50
-#define TELETEXT_OFFSET_Y 16
+#define TELETEXT_OFFSET_Y 32
 #define DISPLAY_FRAME_BYTES (STRAP_WIDTH * STRAP_HEIGHT * 4U)
 static uint8_t strap_premultiplied[STRAP_WIDTH * STRAP_HEIGHT * 4];
 
@@ -272,6 +272,9 @@ if (drmSetClientCap(fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1) < 0) {
         return -1;
     }
     custom_mode = *pmode;
+    custom_mode.vdisplay += TELETEXT_OFFSET_Y;
+    custom_mode.vsync_start += TELETEXT_OFFSET_Y;
+    custom_mode.vsync_end += TELETEXT_OFFSET_Y;
     custom_mode.clock = 15429;
     custom_mode.htotal = 987;
     custom_mode.hdisplay = 822;
@@ -495,12 +498,12 @@ void copy_packet(const uint8_t *src, uint8_t *dest) {
 
 static void overlay_teletext(uint8_t *argb, int field) {
     int pitch = 822 * 4;
-    static uint8_t packets[15][42 + 4];
+    static uint8_t packets[32][42 + 4];
     int cnt = 0;
-    for (int y = 0; y < 15; y++) {
-        int line_map[15] = {
-            1, 3, 5, 7, 9, 11, 13, 15,
-               2, 4, 6, 8, 10, 12, 14,
+    for (int y = 0; y < 32; y++) {
+        int line_map[32] = {
+            1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31,
+            0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30
         };
         uint32_t *row = (uint32_t *)((uint8_t *)argb + (line_map[y]) * pitch);
         packets[y][0] = 0;
@@ -570,10 +573,10 @@ static int drm_vec_plane_update_fb(const uint8_t *argb, unsigned width, unsigned
 //    printf("%d %d %d %d\n", width, out_w, height, out_h);
 
     int tt_offset = TELETEXT_OFFSET_Y * pitch;
-    if ((width == out_w && height == out_h)) {
+    if ((width == out_w && height + TELETEXT_OFFSET_Y == out_h)) {
         memcpy(pixels + tt_offset, argb, drm_vec_plane.fb_sizes[target_index] - tt_offset);
     } else {
-        for (unsigned y = 0; y < out_h; ++y) {
+        for (unsigned y = 0; y < out_h / 2; ++y) {
             unsigned sy = (y * height) / out_h;
             uint32_t *dst = (uint32_t *)(pixels + (size_t)y * pitch);
             const uint32_t *src = (const uint32_t *)(argb + (size_t)sy * width * 4U);
