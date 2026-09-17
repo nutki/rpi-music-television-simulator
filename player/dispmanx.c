@@ -26,24 +26,22 @@
 
 extern bool loadPNG(const char *f_name, Image *image);
 
-#define STRAP_WIDTH 822
-#define STRAP_HEIGHT 576
+#define COMPOSITE_FRAME_W 822
+#define COMPOSITE_FRAME_H 576
 #define OSD_WIDTH 320
 #define OSD_HEIGHT VCR_FONT_H
 #define OSD_TARGET_WIDTH 700
-#define OSD_OFFSET_X ((822 - 700)/2)
+#define OSD_OFFSET_X ((COMPOSITE_FRAME_W - OSD_TARGET_WIDTH)/2)
 #define OSD_TARGET_HEIGHT 48
 #define OSD_OFFSET_Y 50
 #define TELETEXT_OFFSET_Y 32
-#define DISPLAY_FRAME_BYTES (STRAP_WIDTH * STRAP_HEIGHT * 4U)
-static uint8_t strap_premultiplied[STRAP_WIDTH * STRAP_HEIGHT * 4];
+#define COMPOSITE_FRAME_BYTES (COMPOSITE_FRAME_W * COMPOSITE_FRAME_H * 4U)
+static uint8_t strap_premultiplied[COMPOSITE_FRAME_W * COMPOSITE_FRAME_H * 4];
 
 struct drm_vec_plane {
     int fd;
     uint32_t crtc_id;
     uint32_t connector_id;
-    int width;
-    int height;
     uint32_t fb_ids[2];
     uint32_t fb_handles[2];
     uint8_t *fb_pixels_buf[2];
@@ -60,8 +58,6 @@ static struct drm_vec_plane drm_vec_plane = {
     .fd = -1,
     .crtc_id = 0,
     .connector_id = 0,
-    .width = 0,
-    .height = 0,
     .fb_ids = {0, 0},
     .fb_handles = {0, 0},
     .fb_pixels_buf = {NULL, NULL},
@@ -144,7 +140,7 @@ static int drm_vec_plane_acquire(void) {
     custom_mode.vsync_end += TELETEXT_OFFSET_Y;
     custom_mode.clock = 15429;
     custom_mode.htotal = 987;
-    custom_mode.hdisplay = 822;
+    custom_mode.hdisplay = COMPOSITE_FRAME_W;
     custom_mode.hsync_start = 836;
     custom_mode.hsync_end = 909;
 
@@ -152,8 +148,6 @@ static int drm_vec_plane_acquire(void) {
     drm_vec_plane.fd = fd;
     drm_vec_plane.crtc_id = crtc_id;
     drm_vec_plane.connector_id = connector_id;
-    drm_vec_plane.width = custom_mode.hdisplay;
-    drm_vec_plane.height = custom_mode.vdisplay;
 
 
     if (drm_vec_plane_prepare_buffer(0) != 0) {
@@ -186,11 +180,10 @@ static int drm_vec_plane_prepare_buffer(int index) {
     if (drm_vec_plane.fb_ids[index] != 0) {
         return 0;
     }
-    unsigned out_w = drm_vec_plane.width, out_h = drm_vec_plane.height;
 
     struct drm_mode_create_dumb create = {
-        .width = out_w,
-        .height = out_h,
+        .width = COMPOSITE_FRAME_W,
+        .height = COMPOSITE_FRAME_H + TELETEXT_OFFSET_Y,
         .bpp = 32,
     };
     if (drmIoctl(drm_vec_plane.fd, DRM_IOCTL_MODE_CREATE_DUMB, &create) != 0) {
@@ -219,7 +212,7 @@ static int drm_vec_plane_prepare_buffer(int index) {
         return -1;
     }
 
-    int ret = drmModeAddFB(drm_vec_plane.fd, out_w, out_h, 24, 32,
+    int ret = drmModeAddFB(drm_vec_plane.fd, create.width, create.height, 24, 32,
                            create.pitch, create.handle, &drm_vec_plane.fb_ids[index]);
     if (ret != 0) {
         fprintf(stderr, "drm-rp1-vec: drmModeAddFB failed: %d\n", ret);
@@ -244,16 +237,16 @@ static int teletext_bit(uint8_t *packet, int bit) {
     return 0;
 }
 static void overlay_teletext(uint8_t *argb, int field) {
-    int pitch = 822 * 4;
+    int pitch = COMPOSITE_FRAME_W * 4;
     static uint8_t packets[32][42];
     int cnt = 0;
-    for (int y = 0; y < 32; y++) {
+    for (int y = 0; y < TELETEXT_OFFSET_Y; y++) {
         uint32_t *row = (uint32_t *)(argb + y * pitch);
         if (field == y % 2) {
             teletext_get_packet(packets[y]);
             cnt++;
         }
-        for (int x = 0; x < 822; x++) {
+        for (int x = 0; x < COMPOSITE_FRAME_W; x++) {
             // ratio = pixel clock = 108Mhz/7 / teletext data clock  = 6.9375Mhz = 2.2239...
             // offset (real data (clock runin) starts at 8)
             int source_x = x/2.223938223938224 + 6;
@@ -264,43 +257,35 @@ static void overlay_teletext(uint8_t *argb, int field) {
 }
 
 static int complete = 0;
-static void page_flip_handler(int fd, unsigned int frame,
-                              unsigned int seconds, unsigned int useconds,
-                              void *data)
-{
+static void page_flip_handler(int fd, unsigned int frame, unsigned int seconds, unsigned int useconds, void *data) {
     (void)fd;
     (void)frame;
     (void)seconds;
     (void)useconds;
     complete = 1;
 }
-static void check(int result, const char *message)
-{
-    if (result < 0) perror(message);
-}
-static void wait_for_flip(int fd)
-{
-    drmEventContext event = {0};
-    struct pollfd pollfd = {fd, POLLIN, 0};
-
-    event.version = DRM_EVENT_CONTEXT_VERSION;
-    event.page_flip_handler = page_flip_handler;
+static void wait_for_flip() {
+    drmEventContext event = {
+        .version = DRM_EVENT_CONTEXT_VERSION,
+        .page_flip_handler = page_flip_handler,
+    };
+    struct pollfd pollfd = {drm_vec_plane.fd, POLLIN, 0};
     complete = 0;
     while (!complete) {
-        check(poll(&pollfd, 1, -1), "poll DRM page flip");
-        check(drmHandleEvent(fd, &event), "drmHandleEvent");
+        if (poll(&pollfd, 1, -1) < 0) perror("poll DRM page flip");
+        if (drmHandleEvent(drm_vec_plane.fd, &event) < 0) perror("drmHandleEvent");
     }
 }
 static int drm_vec_plane_update_fb(const uint8_t *argb, unsigned width, unsigned height, int from_vlc) {
     if (!argb || width == 0 || height == 0) {
         return -1;
     }
-    if (width != drm_vec_plane.width || height + TELETEXT_OFFSET_Y != drm_vec_plane.height) {
+    if (width != COMPOSITE_FRAME_W || height != COMPOSITE_FRAME_H) {
         printf("Bad size %dx%d\n", width, height);
         return -1;
     }
 
-    uint32_t pitch = drm_vec_plane.width * 4U;
+    uint32_t pitch = COMPOSITE_FRAME_W * 4U;
 
     int target_index = drm_vec_plane.active_fb_index ^ 1;
     if (drm_vec_plane_prepare_buffer(target_index) < 0) return -1;
@@ -310,7 +295,7 @@ static int drm_vec_plane_update_fb(const uint8_t *argb, unsigned width, unsigned
 
     if (drm_vec_plane.strap_alpha > 0 && from_vlc) {
         int blend_ret = ARGBBlend(strap_premultiplied,
-                                  STRAP_WIDTH * 4,
+                                  COMPOSITE_FRAME_W * 4,
                                   argb, pitch,
                                   frame_pixels, pitch,
                                   width, height);
@@ -393,7 +378,7 @@ static void *drm_vec_display_loop(void *unused) {
             last_report = now;
         }
         pthread_mutex_unlock(&display_mutex);
-       if (can_wait) wait_for_flip(drm_vec_plane.fd); else usleep(5000);
+       if (can_wait) wait_for_flip(); else usleep(5000);
     }
     return NULL;
 }
@@ -401,7 +386,7 @@ static void *drm_vec_display_loop(void *unused) {
 static int drm_vec_submit_frame(const uint8_t *argb, unsigned width,
                                 unsigned height, int from_vlc) {
     if (!argb || width == 0 || height == 0 ||
-        (size_t)width * height * 4U > DISPLAY_FRAME_BYTES) {
+        (size_t)width * height * 4U > COMPOSITE_FRAME_BYTES) {
         return -1;
     }
 
@@ -451,14 +436,14 @@ void load_strap(char *path) {
     }
     free(strap_path);
 
-    uint8_t *scaled_argb = malloc((size_t)STRAP_WIDTH * STRAP_HEIGHT * 4U);
+    uint8_t *scaled_argb = malloc((size_t)COMPOSITE_FRAME_W * COMPOSITE_FRAME_H * 4U);
     if (!scaled_argb) {
         fprintf(stderr, "drm-rp1-vec: strap pixel allocation failed\n");
         free(image.buffer);
         return;
     }
     int ret = ARGBScale(image.buffer + image.width / 16 * 8, image.pitch, image.width / 4 * 3, image.height,
-                        scaled_argb, STRAP_WIDTH * 4, STRAP_WIDTH, STRAP_HEIGHT,
+                        scaled_argb, COMPOSITE_FRAME_W * 4, COMPOSITE_FRAME_W, COMPOSITE_FRAME_H,
                         kFilterBilinear);
     free(image.buffer);
     if (ret != 0) {
@@ -466,9 +451,9 @@ void load_strap(char *path) {
         free(scaled_argb);
         return;
     }
-    ARGBAttenuate(scaled_argb, STRAP_WIDTH * 4,
-                  scaled_argb, STRAP_WIDTH * 4,
-                  STRAP_WIDTH, STRAP_HEIGHT);
+    ARGBAttenuate(scaled_argb, COMPOSITE_FRAME_W * 4,
+                  scaled_argb, COMPOSITE_FRAME_W * 4,
+                  COMPOSITE_FRAME_W, COMPOSITE_FRAME_H);
 
     pthread_mutex_lock(&display_mutex);
     free(drm_vec_plane.strap_pixels);
@@ -476,20 +461,20 @@ void load_strap(char *path) {
     drm_vec_plane.strap_alpha = -1;
     pthread_mutex_unlock(&display_mutex);
     printf("drm-rp1-vec: loaded strap %dx%d scaled to %dx%d\n",
-           image.width, image.height, STRAP_WIDTH, STRAP_HEIGHT);
+           image.width, image.height, COMPOSITE_FRAME_W, COMPOSITE_FRAME_H);
 }
 
 void dispmanx_init(void) {
     if (drm_vec_plane_acquire() < 0) {
         return;
     }
-    display_frame.pixels = malloc(DISPLAY_FRAME_BYTES);
+    display_frame.pixels = malloc(COMPOSITE_FRAME_BYTES);
     if (!display_frame.pixels) {
         fprintf(stderr, "drm-rp1-vec: display buffer allocation failed\n");
         return;
     }
-    display_frame.width = STRAP_WIDTH;
-    display_frame.height = STRAP_HEIGHT;
+    display_frame.width = COMPOSITE_FRAME_W;
+    display_frame.height = COMPOSITE_FRAME_H;
     display_frame.busy = 0;
     display_frame.from_vlc = 0;
     display_thread_stop = 0;
@@ -520,18 +505,18 @@ void dispmanx_alpha(int a) {
     uint32_t alpha_mult = a;
     alpha_mult = alpha_mult | (alpha_mult << 16);
     alpha_mult = alpha_mult | (alpha_mult << 8);
-    ARGBShade(drm_vec_plane.strap_pixels, STRAP_WIDTH * 4,
-              strap_premultiplied, STRAP_WIDTH * 4,
-              STRAP_WIDTH, STRAP_HEIGHT, alpha_mult);
+    ARGBShade(drm_vec_plane.strap_pixels, COMPOSITE_FRAME_W * 4,
+              strap_premultiplied, COMPOSITE_FRAME_W * 4,
+              COMPOSITE_FRAME_W, COMPOSITE_FRAME_H, alpha_mult);
     pthread_mutex_unlock(&display_mutex);
 }
 
-uint32_t black_bg[822*576], blue_bg[822*576], random_bg[822*576 + 0xfff];
+uint32_t black_bg[COMPOSITE_FRAME_W*COMPOSITE_FRAME_H], blue_bg[COMPOSITE_FRAME_W*COMPOSITE_FRAME_H], random_bg[COMPOSITE_FRAME_W*COMPOSITE_FRAME_H + 0xfff];
 uint8_t preview_black_bg[86*48], preview_blue_bg[86*48], preview_random_bg[86*48+0xff];
 
 void blank_background(void) {
-    for(int i = 0; i < 822*576; i++) blue_bg[i] = 0xFF0000FF;
-    for(int i = 0; i < 822*576 + 0xfff; i++) random_bg[i] = 0x01010101 * (rand() & 0xff);
+    for(int i = 0; i < COMPOSITE_FRAME_W*COMPOSITE_FRAME_H; i++) blue_bg[i] = 0xFF0000FF;
+    for(int i = 0; i < COMPOSITE_FRAME_W*COMPOSITE_FRAME_H + 0xfff; i++) random_bg[i] = 0x01010101 * (rand() & 0xff);
     for(int i = 0; i < 86*48; i++) preview_blue_bg[i] = 0x80;
     for(int i = 0; i < 86*48 + 0xff; i++) preview_random_bg[i] = rand() & 0xff;
 }
@@ -642,7 +627,7 @@ void bg_mode(int mode) {
     if (mode < 0) mode = last_mode;
     int32_t *src = mode == 2 ? random_bg + (rand() & 0xFFF) : mode == 1 ? blue_bg : black_bg;
     int8_t *srcp = mode == 2 ? preview_random_bg + (rand() & 0xFF) : mode == 1 ? preview_blue_bg : preview_black_bg;
-    drm_vec_submit_frame((uint8_t*)src, 822, 576, 0);
+    drm_vec_submit_frame((uint8_t*)src, COMPOSITE_FRAME_W, COMPOSITE_FRAME_H, 0);
     last_mode = mode;
     preview_shm_publish(srcp, -1);
 }
