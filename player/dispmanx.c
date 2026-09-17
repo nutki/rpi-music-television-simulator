@@ -13,6 +13,7 @@
 #include <sys/ioctl.h>
 #include <pthread.h>
 #include <time.h>
+#include <poll.h>
 
 #include <xf86drm.h>
 #include <xf86drmMode.h>
@@ -20,6 +21,7 @@
 #include "image.h"
 #include "vcrfont.h"
 #include "teletext.h"
+#include "preview_shm.h"
 #include <libyuv.h>
 
 extern bool loadPNG(const char *f_name, Image *image);
@@ -76,7 +78,6 @@ struct display_frame {
     uint8_t *pixels;
     unsigned width;
     unsigned height;
-    int valid;
     int busy;
     int from_vlc;
 };
@@ -99,7 +100,7 @@ static void drm_vec_plane_wait_vblank(void) {
     }
 }
 
-static int drm_vec_plane_prepare_buffer(unsigned out_w, unsigned out_h, int index);
+static int drm_vec_plane_prepare_buffer(int index);
 static int drm_vec_plane_acquire(void) {
     if (drm_vec_plane.fd >= 0) {
         return 0;
@@ -155,7 +156,7 @@ static int drm_vec_plane_acquire(void) {
     drm_vec_plane.height = custom_mode.vdisplay;
 
 
-    if (drm_vec_plane_prepare_buffer(drm_vec_plane.width, drm_vec_plane.height, 0) != 0) {
+    if (drm_vec_plane_prepare_buffer(0) != 0) {
         fprintf(stderr, "drm-rp1-vec: failed to create initial fb\n");
         close(fd);
         return -1;
@@ -181,10 +182,11 @@ static int drm_vec_plane_acquire(void) {
     return 0;
 }
 
-static int drm_vec_plane_prepare_buffer(unsigned out_w, unsigned out_h, int index) {
+static int drm_vec_plane_prepare_buffer(int index) {
     if (drm_vec_plane.fb_ids[index] != 0) {
         return 0;
     }
+    unsigned out_w = drm_vec_plane.width, out_h = drm_vec_plane.height;
 
     struct drm_mode_create_dumb create = {
         .width = out_w,
@@ -289,7 +291,6 @@ static void check(int result, const char *message)
 {
     if (result < 0) perror(message);
 }
-#include <poll.h>
 static void wait_for_flip(int fd)
 {
     drmEventContext event = {0};
@@ -312,43 +313,40 @@ static int drm_vec_plane_update_fb(const uint8_t *argb, unsigned width, unsigned
         return -1;
     }
 
-    unsigned out_w = drm_vec_plane.width, out_h = drm_vec_plane.height;
-    uint32_t pitch = out_w * 4U;
+    uint32_t pitch = drm_vec_plane.width * 4U;
 
     int target_index = drm_vec_plane.active_fb_index ^ 1;
-    if (drm_vec_plane_prepare_buffer(out_w, out_h, target_index) < 0) {
-        return -1;
-    }
+    if (drm_vec_plane_prepare_buffer(target_index) < 0) return -1;
 
     uint8_t *pixels = drm_vec_plane.fb_pixels_buf[target_index];
-
-    int tt_offset = TELETEXT_OFFSET_Y * pitch;
-    memcpy(pixels + tt_offset, argb, out_h * pitch - tt_offset);
+    uint8_t *frame_pixels = pixels + TELETEXT_OFFSET_Y * pitch;
 
     if (drm_vec_plane.strap_alpha > 0 && from_vlc) {
         int blend_ret = ARGBBlend(strap_premultiplied,
                                   STRAP_WIDTH * 4,
-                                  pixels + tt_offset, pitch,
-                                  pixels + tt_offset, pitch,
-                                  out_w, out_h - TELETEXT_OFFSET_Y);
+                                  argb, pitch,
+                                  frame_pixels, pitch,
+                                  width, height);
         if (blend_ret != 0) {
             fprintf(stderr, "drm-rp1-vec: strap blend failed: %d\n", blend_ret);
             return -1;
         }
+    } else {
+        memcpy(frame_pixels, argb, height * pitch);
     }
 
     if (drm_vec_plane.osd_active && drm_vec_plane.osd_pixels) {
         int blend_ret = ARGBBlend(drm_vec_plane.osd_pixels,
                                   OSD_TARGET_WIDTH * 4,
-                                  pixels + tt_offset + pitch * OSD_OFFSET_Y + OSD_OFFSET_X * 4, pitch,
-                                  pixels + tt_offset + pitch * OSD_OFFSET_Y + OSD_OFFSET_X * 4, pitch,
+                                  frame_pixels + pitch * OSD_OFFSET_Y + OSD_OFFSET_X * 4, pitch,
+                                  frame_pixels + pitch * OSD_OFFSET_Y + OSD_OFFSET_X * 4, pitch,
                                   OSD_TARGET_WIDTH, OSD_TARGET_HEIGHT);
         if (blend_ret != 0) {
             fprintf(stderr, "drm-rp1-vec: OSD blend failed: %d\n", blend_ret);
             return -1;
         }
     }
-    overlay_teletext(pixels + tt_offset * 0, target_index);
+    overlay_teletext(pixels, target_index);
 
     int ret = drmModePageFlip(drm_vec_plane.fd, drm_vec_plane.crtc_id,
                               drm_vec_plane.fb_ids[target_index],
@@ -380,20 +378,18 @@ static void *drm_vec_display_loop(void *unused) {
             break;
         }
 
-        if (display_frame.valid) {
-            display_frame.busy = 1;
-            int ret = drm_vec_plane_update_fb(display_frame.pixels,
-                                              display_frame.width,
-                                              display_frame.height,
-                                              display_frame.from_vlc);
-            if (ret == 0) {
-                display_flips++;
-                report_flips++;
-                can_wait = 1;
-            }
-            display_frame.busy = 0;
-            pthread_cond_signal(&display_buffer_free);
+        display_frame.busy = 1;
+        int ret = drm_vec_plane_update_fb(display_frame.pixels,
+                                            display_frame.width,
+                                            display_frame.height,
+                                            display_frame.from_vlc);
+        if (ret == 0) {
+            display_flips++;
+            report_flips++;
+            can_wait = 1;
         }
+        display_frame.busy = 0;
+        pthread_cond_signal(&display_buffer_free);
 
         struct timespec now;
         clock_gettime(CLOCK_MONOTONIC, &now);
@@ -433,7 +429,6 @@ static int drm_vec_submit_frame(const uint8_t *argb, unsigned width,
     memcpy(display_frame.pixels, argb, (size_t)width * height * 4U);
     display_frame.width = width;
     display_frame.height = height;
-    display_frame.valid = 1;
     display_frame.from_vlc = from_vlc;
     if (from_vlc) {
         vlc_submitted++;
@@ -508,7 +503,6 @@ void dispmanx_init(void) {
     }
     display_frame.width = STRAP_WIDTH;
     display_frame.height = STRAP_HEIGHT;
-    display_frame.valid = 0;
     display_frame.busy = 0;
     display_frame.from_vlc = 0;
     display_thread_stop = 0;
@@ -566,7 +560,6 @@ void dispmanx_close(void) {
     }
     free(display_frame.pixels);
     display_frame.pixels = NULL;
-    display_frame.valid = 0;
     display_frame.busy = 0;
     display_frame.from_vlc = 0;
     free(drm_vec_plane.strap_pixels);
@@ -657,7 +650,6 @@ void osd_text_clear(void) {
     pthread_mutex_unlock(&display_mutex);
 }
 
-#include "preview_shm.h"
 void bg_mode(int mode) {
     static int last_mode = 0;
     if (mode < 0) mode = last_mode;
