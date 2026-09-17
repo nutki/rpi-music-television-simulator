@@ -38,27 +38,15 @@ static uint8_t strap_premultiplied[STRAP_WIDTH * STRAP_HEIGHT * 4];
 
 struct drm_vec_plane {
     int fd;
-    uint32_t plane_id;
     uint32_t crtc_id;
     uint32_t connector_id;
-    uint32_t possible_crtcs;
     int width;
     int height;
-    uint32_t fb_id;
-    uint32_t fb_handle;
-    uint8_t *fb_pixels;
-    size_t fb_size;
-    uint32_t fb_pitch;
     uint32_t fb_ids[2];
     uint32_t fb_handles[2];
     uint8_t *fb_pixels_buf[2];
     size_t fb_sizes[2];
-    uint32_t fb_pitches[2];
     int active_fb_index;
-    uint32_t mode_fb_id;
-    uint32_t mode_fb_handle;
-    uint8_t *mode_fb_pixels;
-    size_t mode_fb_size;
     uint8_t *strap_pixels;
     int strap_alpha;
     uint8_t *osd_source;
@@ -68,27 +56,15 @@ struct drm_vec_plane {
 
 static struct drm_vec_plane drm_vec_plane = {
     .fd = -1,
-    .plane_id = 0,
     .crtc_id = 0,
     .connector_id = 0,
-    .possible_crtcs = 0,
     .width = 0,
     .height = 0,
-    .fb_id = 0,
-    .fb_handle = 0,
-    .fb_pixels = NULL,
-    .fb_size = 0,
-    .fb_pitch = 0,
     .fb_ids = {0, 0},
     .fb_handles = {0, 0},
     .fb_pixels_buf = {NULL, NULL},
     .fb_sizes = {0, 0},
-    .fb_pitches = {0, 0},
     .active_fb_index = 0,
-    .mode_fb_id = 0,
-    .mode_fb_handle = 0,
-    .mode_fb_pixels = NULL,
-    .mode_fb_size = 0,
     .strap_pixels = NULL,
     .strap_alpha = -1,
     .osd_source = NULL,
@@ -123,94 +99,7 @@ static void drm_vec_plane_wait_vblank(void) {
     }
 }
 
-static int drm_vec_plane_set_colorbar(void) {
-    if (drm_vec_plane.fd < 0 || drm_vec_plane.plane_id == 0) {
-        return -1;
-    }
-
-    uint32_t width = 720;
-    uint32_t height = 576;
-    uint32_t pitch = width * 4;
-    uint32_t size = pitch * height;
-
-    struct drm_mode_create_dumb create = {0};
-    create.width = width;
-    create.height = height;
-    create.bpp = 32;
-    create.flags = 0;
-    if (drmIoctl(drm_vec_plane.fd, DRM_IOCTL_MODE_CREATE_DUMB, &create) != 0) {
-        fprintf(stderr, "drm-rp1-vec: DRM_IOCTL_MODE_CREATE_DUMB failed\n");
-        return -1;
-    }
-
-    struct drm_mode_map_dumb map = {0};
-    map.handle = create.handle;
-    if (drmIoctl(drm_vec_plane.fd, DRM_IOCTL_MODE_MAP_DUMB, &map) != 0) {
-        fprintf(stderr, "drm-rp1-vec: DRM_IOCTL_MODE_MAP_DUMB failed\n");
-        struct drm_mode_destroy_dumb destroy = {
-            .handle = create.handle,
-        };
-
-        drmIoctl(drm_vec_plane.fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
-        return -1;
-    }
-
-    uint8_t *pixels = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED,
-                          drm_vec_plane.fd, map.offset);
-    if (pixels == MAP_FAILED) {
-        fprintf(stderr, "drm-rp1-vec: mmap failed: %s\n", strerror(errno));
-        return -1;
-    }
-
-    for (uint32_t y = 0; y < height; ++y) {
-        for (uint32_t x = 0; x < width; ++x) {
-            uint8_t r, g, b;
-            int bar = (x * 8) / width;
-            switch (bar) {
-                case 0: r = 255; g = 0;   b = 0;   break;
-                case 1: r = 255; g = 255; b = 0;   break;
-                case 2: r = 0;   g = 255; b = 0;   break;
-                case 3: r = 0;   g = 255; b = 255; break;
-                case 4: r = 0;   g = 0;   b = 255; break;
-                case 5: r = 255; g = 0;   b = 255; break;
-                case 6: r = 255; g = 255; b = 255; break;
-                default: r = 64;  g = 64;  b = 64;  break;
-            }
-            uint32_t *pixel = (uint32_t *)(pixels + (y * pitch) + (x * 4));
-            *pixel = (0xffu << 24) | (r << 16) | (g << 8) | b;
-        }
-    }
-
-    uint32_t handles[4] = { create.handle, 0, 0, 0 };
-    uint32_t pitches[4] = { pitch, 0, 0, 0 };
-    uint32_t offsets[4] = { 0, 0, 0, 0 };
-    uint32_t fb_id = 0;
-    int ret = drmModeAddFB2(drm_vec_plane.fd, width, height,
-                            DRM_FORMAT_XRGB8888,
-                            handles, pitches, offsets, &fb_id, 0);
-    if (ret != 0) {
-        fprintf(stderr, "drm-rp1-vec: drmModeAddFB failed: %d\n", ret);
-        munmap(pixels, size);
-        return -1;
-    }
-
-    drm_vec_plane_wait_vblank();
-    ret = drmModeSetPlane(drm_vec_plane.fd, drm_vec_plane.plane_id,
-                          drm_vec_plane.crtc_id, fb_id, DRM_MODE_PAGE_FLIP_EVENT,
-                          0, 0, width, height,
-                          0, 0, width << 16, height << 16);
-    if (ret != 0) {
-        fprintf(stderr, "drm-rp1-vec: drmModeSetPlane failed: %d\n", ret);
-        drmModeRmFB(drm_vec_plane.fd, fb_id);
-        munmap(pixels, size);
-        return -1;
-    }
-
-    printf("drm-rp1-vec: colorbar plane set fb=%u w=%u h=%u\n", fb_id, width, height);
-    munmap(pixels, size);
-    return 0;
-}
-
+static int drm_vec_plane_prepare_buffer(unsigned out_w, unsigned out_h, int index);
 static int drm_vec_plane_acquire(void) {
     if (drm_vec_plane.fd >= 0) {
         return 0;
@@ -222,56 +111,33 @@ static int drm_vec_plane_acquire(void) {
         fprintf(stderr, "drm-rp1-vec: failed to open %s: %s\n", device, strerror(errno));
         return -1;
     }
-// Enable universal planes to expose primary and cursor planes
-if (drmSetClientCap(fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1) < 0) {
-    fprintf(stderr, "drm-rp1-vec: failed to set universal planes capability\n");
-    close(fd);
-    return -1;
-}
     drmModeResPtr resources = drmModeGetResources(fd);
     if (!resources) {
         fprintf(stderr, "drm-rp1-vec: drmModeGetResources failed on %s\n", device);
         close(fd);
         return -1;
     }
+    uint32_t connector_id = resources->connectors[0];
+    uint32_t crtc_id = resources->crtcs[0];
+    drmModeFreeResources(resources);
 
-    drmModeConnectorPtr connector = NULL;
-    uint32_t connector_id = 0;
-    for (int i = 0; i < resources->count_connectors; ++i) {
-        connector = drmModeGetConnector(fd, resources->connectors[i]);
-        if (connector && connector->connection == DRM_MODE_CONNECTED) {
-            connector_id = connector->connector_id;
-            break;
-        }
-        drmModeFreeConnector(connector);
-        connector = NULL;
-    }
+    int mode_index = -1;
+    drmModeConnectorPtr connector = drmModeGetConnector(fd, connector_id);
     if (!connector) {
-        fprintf(stderr, "drm-rp1-vec: no connected connector found\n");
-        drmModeFreeResources(resources);
+        fprintf(stderr, "drm-rp1-vec: no connector found\n");
         close(fd);
         return -1;
     }
-
-    drmModeModeInfo *pmode = NULL, custom_mode;
-    for (int i = 0; i < connector->count_modes; ++i) {
-        if (connector->modes[i].hdisplay == 720 &&
-            connector->modes[i].vdisplay == 576 &&
-            (connector->modes[i].flags & DRM_MODE_FLAG_INTERLACE)) {
-            pmode = &connector->modes[i];
-            if (!strcmp(connector->modes[i].name, "720x576i")) {
-                break;
-            }
-        }
+    for (int i = 0; i < connector->count_modes; ++i) if (!strcmp(connector->modes[i].name, "720x576i")) {
+        mode_index = i;
     }
-    if (!pmode) {
+    drmModeFreeConnector(connector);
+    if (mode_index < 0) {
         fprintf(stderr, "drm-rp1-vec: connected output has no 720x576i mode\n");
-        drmModeFreeConnector(connector);
-        drmModeFreeResources(resources);
         close(fd);
         return -1;
     }
-    custom_mode = *pmode;
+    drmModeModeInfo custom_mode = connector->modes[mode_index];
     custom_mode.vdisplay += TELETEXT_OFFSET_Y;
     custom_mode.vsync_start += TELETEXT_OFFSET_Y;
     custom_mode.vsync_end += TELETEXT_OFFSET_Y;
@@ -280,179 +146,60 @@ if (drmSetClientCap(fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1) < 0) {
     custom_mode.hdisplay = 822;
     custom_mode.hsync_start = 836;
     custom_mode.hsync_end = 909;
-    drmModeEncoderPtr encoder = drmModeGetEncoder(fd, resources->encoders[0]);
-    if (!encoder) {
-        fprintf(stderr, "drm-rp1-vec: failed to get connector encoder\n");
-        drmModeFreeConnector(connector);
-        drmModeFreeResources(resources);
-        close(fd);
-        return -1;
-    }
-    uint32_t crtc_id = encoder->crtc_id;
-    int crtc_index = -1;
-    if (!crtc_id) crtc_id = resources->crtcs[0];
-    for (int i = 0; i < resources->count_crtcs; ++i) {
-        if (resources->crtcs[i] == crtc_id) {
-            crtc_index = i;
-            break;
-        }
-    }
-    drmModeFreeEncoder(encoder);
-    if (crtc_index < 0) {
-        fprintf(stderr, "drm-rp1-vec: connector encoder has no usable CRTC\n");
-        drmModeFreeConnector(connector);
-        drmModeFreeResources(resources);
-        close(fd);
-        return -1;
-    }
 
-    drmModePlaneResPtr planes = drmModeGetPlaneResources(fd);
-    if (!planes || planes->count_planes == 0) {
-        fprintf(stderr, "drm-rp1-vec: no planes reported for %s %p\n", device, (void *)planes);
-        if (planes) drmModeFreePlaneResources(planes);
-        drmModeFreeResources(resources);
-        drmModeFreeConnector(connector);
-        close(fd);
-        return -1;
-    }
-
-    uint32_t plane_id = 0;
-    drmModePlanePtr plane = NULL;
-    for (int i = 0; i < planes->count_planes; ++i) {
-        plane = drmModeGetPlane(fd, planes->planes[i]);
-        if (!plane) {
-            continue;
-        }
-
-        if (!(plane->possible_crtcs & (1U << crtc_index)) ||
-            plane->count_formats == 0) {
-            drmModeFreePlane(plane);
-            plane = NULL;
-            continue;
-        }
-
-        plane_id = plane->plane_id;
-        printf("drm-rp1-vec: plane candidate id=%u crtc=%u possible_crtcs=0x%x formats=%u\n",
-               plane_id, plane->crtc_id, plane->possible_crtcs, plane->count_formats);
-        break;
-    }
-
-    if (!plane) {
-        fprintf(stderr, "drm-rp1-vec: no usable graphic plane found\n");
-        drmModeFreePlaneResources(planes);
-        drmModeFreeConnector(connector);
-        drmModeFreeResources(resources);
-        close(fd);
-        return -1;
-    }
 
     drm_vec_plane.fd = fd;
-    drm_vec_plane.plane_id = plane_id;
     drm_vec_plane.crtc_id = crtc_id;
     drm_vec_plane.connector_id = connector_id;
-    drm_vec_plane.possible_crtcs = plane->possible_crtcs;
     drm_vec_plane.width = custom_mode.hdisplay;
     drm_vec_plane.height = custom_mode.vdisplay;
 
-    struct drm_mode_create_dumb create = {0};
-    create.width = custom_mode.hdisplay;
-    create.height = custom_mode.vdisplay;
-    create.bpp = 32;
-    if (drmIoctl(fd, DRM_IOCTL_MODE_CREATE_DUMB, &create) != 0) {
-        fprintf(stderr, "drm-rp1-vec: mode framebuffer allocation failed\n");
-        drmModeFreePlane(plane);
-        drmModeFreePlaneResources(planes);
-        drmModeFreeConnector(connector);
-        drmModeFreeResources(resources);
+
+    if (drm_vec_plane_prepare_buffer(drm_vec_plane.width, drm_vec_plane.height, 0) != 0) {
+        fprintf(stderr, "drm-rp1-vec: failed to create initial fb\n");
         close(fd);
         return -1;
-    }
-    struct drm_mode_map_dumb map = { .handle = create.handle };
-    if (drmIoctl(fd, DRM_IOCTL_MODE_MAP_DUMB, &map) != 0) {
-        struct drm_mode_destroy_dumb destroy = { .handle = create.handle };
-        drmIoctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
-        fprintf(stderr, "drm-rp1-vec: mode framebuffer mapping failed\n");
-        drmModeFreePlane(plane);
-        drmModeFreePlaneResources(planes);
-        drmModeFreeConnector(connector);
-        drmModeFreeResources(resources);
-        close(fd);
-        return -1;
-    }
-    uint8_t *mode_pixels = mmap(NULL, create.size, PROT_READ | PROT_WRITE,
-                                MAP_SHARED, fd, map.offset);
-    if (mode_pixels == MAP_FAILED) {
-        struct drm_mode_destroy_dumb destroy = { .handle = create.handle };
-        drmIoctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
-        fprintf(stderr, "drm-rp1-vec: mode framebuffer mapping failed\n");
-        drmModeFreePlane(plane);
-        drmModeFreePlaneResources(planes);
-        drmModeFreeConnector(connector);
-        drmModeFreeResources(resources);
-        close(fd);
-        return -1;
-    }
-    memset(mode_pixels, 0, create.size);
-    uint32_t mode_fb_id = 0;
-    if (drmModeAddFB(fd, create.width, create.height, 24, 32,
-                     create.pitch, create.handle, &mode_fb_id) != 0 ||
-        drmModeSetCrtc(fd, crtc_id, mode_fb_id, 0, 0, &connector_id, 1,
+    };
+
+    memset(drm_vec_plane.fb_pixels_buf[0], 0x55, drm_vec_plane.fb_sizes[0]);
+    if (drmModeSetCrtc(fd, crtc_id, drm_vec_plane.fb_ids[0], 0, 0, &connector_id, 1,
                        &custom_mode) != 0) {
         fprintf(stderr, "drm-rp1-vec: failed to set 720x576i CRTC mode\n");
-        if (mode_fb_id) drmModeRmFB(fd, mode_fb_id);
-        munmap(mode_pixels, create.size);
-        struct drm_mode_destroy_dumb destroy = { .handle = create.handle };
+        drmModeRmFB(fd, drm_vec_plane.fb_ids[0]);
+        munmap(drm_vec_plane.fb_pixels_buf[0], drm_vec_plane.fb_sizes[0]);
+        struct drm_mode_destroy_dumb destroy = { .handle = drm_vec_plane.fb_handles[0] };
         drmIoctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
-        drmModeFreePlane(plane);
-        drmModeFreePlaneResources(planes);
-        drmModeFreeConnector(connector);
-        drmModeFreeResources(resources);
         close(fd);
         return -1;
     }
-    drm_vec_plane.mode_fb_id = mode_fb_id;
-    drm_vec_plane.mode_fb_handle = create.handle;
-    drm_vec_plane.mode_fb_pixels = mode_pixels;
-    drm_vec_plane.mode_fb_size = create.size;
 
-    printf("drm-rp1-vec: acquired plane id=%u crtc=%u connector=%u mode=%s possible_crtcs=0x%x\n",
-           drm_vec_plane.plane_id,
+    printf("drm-rp1-vec: acquired rtc=%u connector=%u mode=%s\n",
            drm_vec_plane.crtc_id,
            drm_vec_plane.connector_id,
-           custom_mode.name,
-           drm_vec_plane.possible_crtcs);
+           custom_mode.name);
 
-    drmModeFreePlane(plane);
-    drmModeFreePlaneResources(planes);
-    drmModeFreeConnector(connector);
-    drmModeFreeResources(resources);
     return 0;
 }
 
 static int drm_vec_plane_prepare_buffer(unsigned out_w, unsigned out_h, int index) {
-    uint32_t pitch = out_w * 4U;
-    uint32_t size = pitch * out_h;
-
     if (drm_vec_plane.fb_ids[index] != 0) {
         return 0;
     }
 
-    struct drm_mode_create_dumb create = {0};
-    create.width = out_w;
-    create.height = out_h;
-    create.bpp = 32;
-    create.flags = 0;
+    struct drm_mode_create_dumb create = {
+        .width = out_w,
+        .height = out_h,
+        .bpp = 32,
+    };
     if (drmIoctl(drm_vec_plane.fd, DRM_IOCTL_MODE_CREATE_DUMB, &create) != 0) {
         fprintf(stderr, "drm-rp1-vec: DRM_IOCTL_MODE_CREATE_DUMB failed\n");
         return -1;
     }
 
     drm_vec_plane.fb_handles[index] = create.handle;
-    drm_vec_plane.fb_pitches[index] = pitch;
-    drm_vec_plane.fb_sizes[index] = size;
+    drm_vec_plane.fb_sizes[index] = create.size;
 
-    struct drm_mode_map_dumb map = {0};
-    map.handle = create.handle;
+    struct drm_mode_map_dumb map = { .handle = create.handle };
     if (drmIoctl(drm_vec_plane.fd, DRM_IOCTL_MODE_MAP_DUMB, &map) != 0) {
         fprintf(stderr, "drm-rp1-vec: DRM_IOCTL_MODE_MAP_DUMB failed\n");
         struct drm_mode_destroy_dumb destroy = { .handle = create.handle };
@@ -460,7 +207,7 @@ static int drm_vec_plane_prepare_buffer(unsigned out_w, unsigned out_h, int inde
         return -1;
     }
 
-    drm_vec_plane.fb_pixels_buf[index] = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED,
+    drm_vec_plane.fb_pixels_buf[index] = mmap(NULL, create.size, PROT_READ | PROT_WRITE, MAP_SHARED,
                                              drm_vec_plane.fd, map.offset);
     if (drm_vec_plane.fb_pixels_buf[index] == MAP_FAILED) {
         fprintf(stderr, "drm-rp1-vec: mmap failed: %s\n", strerror(errno));
@@ -471,10 +218,10 @@ static int drm_vec_plane_prepare_buffer(unsigned out_w, unsigned out_h, int inde
     }
 
     int ret = drmModeAddFB(drm_vec_plane.fd, out_w, out_h, 24, 32,
-                           pitch, create.handle, &drm_vec_plane.fb_ids[index]);
+                           create.pitch, create.handle, &drm_vec_plane.fb_ids[index]);
     if (ret != 0) {
         fprintf(stderr, "drm-rp1-vec: drmModeAddFB failed: %d\n", ret);
-        munmap(drm_vec_plane.fb_pixels_buf[index], size);
+        munmap(drm_vec_plane.fb_pixels_buf[index], create.size);
         drm_vec_plane.fb_pixels_buf[index] = NULL;
         struct drm_mode_destroy_dumb destroy = { .handle = create.handle };
         drmIoctl(drm_vec_plane.fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
@@ -560,9 +307,12 @@ static int drm_vec_plane_update_fb(const uint8_t *argb, unsigned width, unsigned
     if (!argb || width == 0 || height == 0) {
         return -1;
     }
+    if (width != drm_vec_plane.width || height + TELETEXT_OFFSET_Y != drm_vec_plane.height) {
+        printf("Bad size %dx%d\n", width, height);
+        return -1;
+    }
 
-    unsigned out_w = drm_vec_plane.width > 0 ? drm_vec_plane.width : width;
-    unsigned out_h = drm_vec_plane.height > 0 ? drm_vec_plane.height : height;
+    unsigned out_w = drm_vec_plane.width, out_h = drm_vec_plane.height;
     uint32_t pitch = out_w * 4U;
 
     int target_index = drm_vec_plane.active_fb_index ^ 1;
@@ -571,19 +321,9 @@ static int drm_vec_plane_update_fb(const uint8_t *argb, unsigned width, unsigned
     }
 
     uint8_t *pixels = drm_vec_plane.fb_pixels_buf[target_index];
-//    printf("%d %d %d %d\n", width, out_w, height, out_h);
 
     int tt_offset = TELETEXT_OFFSET_Y * pitch;
-    if ((width == out_w && height + TELETEXT_OFFSET_Y == out_h)) {
-        memcpy(pixels + tt_offset, argb, drm_vec_plane.fb_sizes[target_index] - tt_offset);
-    } else {
-        for (unsigned y = 0; y < out_h / 2; ++y) {
-            unsigned sy = (y * height) / out_h;
-            uint32_t *dst = (uint32_t *)(pixels + (size_t)y * pitch);
-            const uint32_t *src = (const uint32_t *)(argb + (size_t)sy * width * 4U);
-            memcpy(dst, src, width * 4);
-        }
-    }
+    memcpy(pixels + tt_offset, argb, out_h * pitch - tt_offset);
 
     if (drm_vec_plane.strap_alpha > 0 && from_vlc) {
         int blend_ret = ARGBBlend(strap_premultiplied,
@@ -608,34 +348,20 @@ static int drm_vec_plane_update_fb(const uint8_t *argb, unsigned width, unsigned
             return -1;
         }
     }
-   overlay_teletext(pixels + tt_offset * 0, target_index);
+    overlay_teletext(pixels + tt_offset * 0, target_index);
 
-//    drm_vec_plane_wait_vblank();
-    // int ret = drmModeSetPlane(drm_vec_plane.fd, drm_vec_plane.plane_id,
-    //                           drm_vec_plane.crtc_id, drm_vec_plane.fb_ids[target_index], DRM_MODE_PAGE_FLIP_EVENT * 0,
-    //                           0, 0, out_w, out_h,
-    //                           0, 0, out_w << 16, out_h << 16);
-    // if (ret != 0) {
-    //     fprintf(stderr, "drm-rp1-vec: drmModeSetPlane failed: %d\n", ret);
-    //     return -1;
-    // }
-    int ret2 = drmModePageFlip(drm_vec_plane.fd, drm_vec_plane.crtc_id,
+    int ret = drmModePageFlip(drm_vec_plane.fd, drm_vec_plane.crtc_id,
                               drm_vec_plane.fb_ids[target_index],
                         DRM_MODE_PAGE_FLIP_EVENT, 0);
-    if (ret2 != 0) {
-        fprintf(stderr, "drm-rp1-vec: drmModePageFlip failed: %d\n", ret2);
+    if (ret != 0) {
+        fprintf(stderr, "drm-rp1-vec: drmModePageFlip failed: %d\n", ret);
         return -1;
     }
 
     drm_vec_plane.active_fb_index = target_index;
-    drm_vec_plane.fb_id = drm_vec_plane.fb_ids[target_index];
-    drm_vec_plane.fb_handle = drm_vec_plane.fb_handles[target_index];
-    drm_vec_plane.fb_pixels = pixels;
-    drm_vec_plane.fb_size = drm_vec_plane.fb_sizes[target_index];
-    drm_vec_plane.fb_pitch = pitch;
 
-    // printf("drm-rp1-vec: uploaded %ux%u ARGB frame to plane %u via back buffer %u\n",
-    //        out_w, out_h, drm_vec_plane.plane_id, drm_vec_plane.fb_id);
+    // printf("drm-rp1-vec: uploaded %ux%u ARGB frame via back buffer %u\n",
+    //        out_w, out_h, drm_vec_plane.fb_ids[target_index]);
     return 0;
 }
 
@@ -647,7 +373,6 @@ static void *drm_vec_display_loop(void *unused) {
     uint64_t report_vlc = 0;
 
     for (;;) {
-//        drm_vec_plane_wait_vblank();
         int can_wait = 0;
         pthread_mutex_lock(&display_mutex);
         if (display_thread_stop) {
@@ -852,21 +577,6 @@ void dispmanx_close(void) {
     free(drm_vec_plane.osd_pixels);
     drm_vec_plane.osd_pixels = NULL;
     drm_vec_plane.osd_active = 0;
-    if (drm_vec_plane.mode_fb_pixels != NULL) {
-        munmap(drm_vec_plane.mode_fb_pixels, drm_vec_plane.mode_fb_size);
-        drm_vec_plane.mode_fb_pixels = NULL;
-    }
-    if (drm_vec_plane.mode_fb_id != 0 && drm_vec_plane.fd >= 0) {
-        drmModeRmFB(drm_vec_plane.fd, drm_vec_plane.mode_fb_id);
-        drm_vec_plane.mode_fb_id = 0;
-    }
-    if (drm_vec_plane.mode_fb_handle != 0 && drm_vec_plane.fd >= 0) {
-        struct drm_mode_destroy_dumb destroy = {
-            .handle = drm_vec_plane.mode_fb_handle,
-        };
-        drmIoctl(drm_vec_plane.fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
-        drm_vec_plane.mode_fb_handle = 0;
-    }
     for (int i = 0; i < 2; ++i) {
         if (drm_vec_plane.fb_pixels_buf[i] != NULL) {
             munmap(drm_vec_plane.fb_pixels_buf[i], drm_vec_plane.fb_sizes[i]);
@@ -882,19 +592,11 @@ void dispmanx_close(void) {
             drm_vec_plane.fb_handles[i] = 0;
         }
     }
-    if (drm_vec_plane.fb_pixels != NULL) {
-        drm_vec_plane.fb_pixels = NULL;
-    }
-    if (drm_vec_plane.fb_id != 0) {
-        drm_vec_plane.fb_id = 0;
-    }
     if (drm_vec_plane.fd >= 0) {
         close(drm_vec_plane.fd);
         drm_vec_plane.fd = -1;
-        drm_vec_plane.plane_id = 0;
         drm_vec_plane.crtc_id = 0;
         drm_vec_plane.connector_id = 0;
-        drm_vec_plane.possible_crtcs = 0;
         drm_vec_plane.active_fb_index = 0;
     }
 }
