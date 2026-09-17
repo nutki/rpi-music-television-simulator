@@ -293,8 +293,8 @@ static void libvlc_log_display(void *opaque, void *picture) {
 
 static void libvlc_ensure(void) {
    if (!vlc_instance) {
-      const char *vlc_argv[] = { "--intf=none", "--no-video-title-show" };
-      vlc_instance = libvlc_new(2, vlc_argv);
+      const char *vlc_argv[] = { "--intf=none", "--no-video-title-show", "--aout=alsa",  "--alsa-audio-device=hw:2,0" };
+      vlc_instance = libvlc_new(4, vlc_argv);
    }
    if (!vlc_player && vlc_instance) {
       vlc_player = libvlc_media_player_new(vlc_instance);
