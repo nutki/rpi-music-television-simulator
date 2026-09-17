@@ -234,43 +234,30 @@ static int drm_vec_plane_prepare_buffer(int index) {
 
     return 0;
 }
-static uint8_t tt_source[370] = { 0 };
-void copy_packet(const uint8_t *src, uint8_t *dest) {
-    int n, m;
-    for (n=0; n<42 + 4; n++) {
-        uint8_t b = *src++;
-        for (m=0; m<8; m++) {
-            *dest++ = b&1;
-            b = b>>1;
-        }
-    }
-}
 
+static int teletext_bit(uint8_t *packet, int bit) {
+    if (bit >= 0 && bit < 32) {
+        return 1 & (0x27555500 >> bit);
+    } else if (bit < 8 * 46) {
+        return 1 & (packet[(bit-32) >> 3] >> (bit & 7));
+    }
+    return 0;
+}
 static void overlay_teletext(uint8_t *argb, int field) {
     int pitch = 822 * 4;
-    static uint8_t packets[32][42 + 4];
+    static uint8_t packets[32][42];
     int cnt = 0;
     for (int y = 0; y < 32; y++) {
-        int line_map[32] = {
-            1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31,
-            0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30
-        };
-        uint32_t *row = (uint32_t *)((uint8_t *)argb + (line_map[y]) * pitch);
-        packets[y][0] = 0;
-        packets[y][1] = 0x55;
-        packets[y][2] = 0x55;
-        packets[y][3] = 0x27;
-        if (field != line_map[y]%2) {
-            teletext_get_packet(packets[y] + 4);
+        uint32_t *row = (uint32_t *)(argb + y * pitch);
+        if (field == y % 2) {
+            teletext_get_packet(packets[y]);
             cnt++;
         }
-        copy_packet(packets[y], tt_source);
         for (int x = 0; x < 822; x++) {
             // ratio = pixel clock = 108Mhz/7 / teletext data clock  = 6.9375Mhz = 2.2239...
             // offset (real data (clock runin) starts at 8)
             int source_x = x/2.223938223938224 + 6;
-            int v = source_x < 370 ? tt_source[source_x] : 0;
-            row[x] = v ? 0xffffffff : 0xff000000;
+            row[x] = teletext_bit(packets[y], source_x) ? 0xffffffff : 0xff000000;
         }
     }
     teletext_request_packets(cnt);
