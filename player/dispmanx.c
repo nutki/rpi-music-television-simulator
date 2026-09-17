@@ -280,7 +280,7 @@ if (drmSetClientCap(fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1) < 0) {
     custom_mode.hdisplay = 822;
     custom_mode.hsync_start = 836;
     custom_mode.hsync_end = 909;
-    drmModeEncoderPtr encoder = drmModeGetEncoder(fd, connector->encoder_id);
+    drmModeEncoderPtr encoder = drmModeGetEncoder(fd, resources->encoders[0]);
     if (!encoder) {
         fprintf(stderr, "drm-rp1-vec: failed to get connector encoder\n");
         drmModeFreeConnector(connector);
@@ -290,6 +290,7 @@ if (drmSetClientCap(fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1) < 0) {
     }
     uint32_t crtc_id = encoder->crtc_id;
     int crtc_index = -1;
+    if (!crtc_id) crtc_id = resources->crtcs[0];
     for (int i = 0; i < resources->count_crtcs; ++i) {
         if (resources->crtcs[i] == crtc_id) {
             crtc_index = i;
