@@ -1,3 +1,4 @@
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_executable(sdtv_ctl sdtv_ctl.c)
 add_executable (cecinput cec.cc)
 target_link_libraries(cecinput dl cec)
