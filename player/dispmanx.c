@@ -41,7 +41,6 @@ static uint8_t strap_premultiplied[COMPOSITE_FRAME_W * COMPOSITE_FRAME_H * 4];
 struct drm_vec_plane {
     int fd;
     uint32_t crtc_id;
-    uint32_t connector_id;
     uint32_t fb_ids[2];
     uint32_t fb_handles[2];
     uint8_t *fb_pixels_buf[2];
@@ -54,10 +53,26 @@ struct drm_vec_plane {
     int osd_active;
 };
 
+struct drm_hdmi_planes {
+    int fd;
+    uint32_t crtc_id;
+    uint32_t fb_id;
+    uint32_t fb_handle;
+    uint32_t video_plane_id;
+    uint32_t video_fb_id;
+    uint32_t video_fb_handle;
+    uint8_t *video_fb_pixels_buf;
+    size_t bg_fb_size;
+    uint32_t strap_plane_id;
+    uint32_t strap_fb_id;
+    uint32_t strap_fb_handle;
+    uint8_t *strap_fb_pixels_buf;
+    size_t strap_fb_size;
+};
+
 static struct drm_vec_plane drm_vec_plane = {
     .fd = -1,
     .crtc_id = 0,
-    .connector_id = 0,
     .fb_ids = {0, 0},
     .fb_handles = {0, 0},
     .fb_pixels_buf = {NULL, NULL},
@@ -68,6 +83,19 @@ static struct drm_vec_plane drm_vec_plane = {
     .osd_source = NULL,
     .osd_pixels = NULL,
     .osd_active = 0,
+};
+
+static struct drm_hdmi_planes drm_hdmi_planes = {
+    .fd = -1,
+    .crtc_id = 0,
+    .video_fb_id = 0,
+    .video_fb_handle = 0,
+    .video_fb_pixels_buf = NULL,
+    .bg_fb_size = 0,
+    .strap_fb_id = 0,
+    .strap_fb_handle = 0,
+    .strap_fb_pixels_buf = NULL,
+    .strap_fb_size = 0,
 };
 
 struct display_frame {
@@ -81,7 +109,7 @@ struct display_frame {
 static struct display_frame display_frame;
 static pthread_mutex_t display_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t display_buffer_free = PTHREAD_COND_INITIALIZER;
-static pthread_t display_thread;
+static pthread_t display_thread, display_hdmi_thread;
 static int display_thread_running;
 static int display_thread_stop;
 static uint64_t vlc_submitted;
@@ -102,7 +130,8 @@ static int drm_vec_plane_acquire(void) {
         return 0;
     }
 
-    const char *device = "/dev/dri/card0";
+//    const char *device = "/dev/dri/card0";
+    const char *device = "/dev/dri/by-path/platform-1f00144000.vec-card";
     int fd = open(device, O_RDWR | O_CLOEXEC);
     if (fd < 0) {
         fprintf(stderr, "drm-rp1-vec: failed to open %s: %s\n", device, strerror(errno));
@@ -147,7 +176,6 @@ static int drm_vec_plane_acquire(void) {
 
     drm_vec_plane.fd = fd;
     drm_vec_plane.crtc_id = crtc_id;
-    drm_vec_plane.connector_id = connector_id;
 
 
     if (drm_vec_plane_prepare_buffer(0) != 0) {
@@ -170,12 +198,234 @@ static int drm_vec_plane_acquire(void) {
 
     printf("drm-rp1-vec: acquired rtc=%u connector=%u mode=%s\n",
            drm_vec_plane.crtc_id,
-           drm_vec_plane.connector_id,
+           connector_id,
            custom_mode.name);
 
     return 0;
 }
 
+#define HDMI_WIDTH 1920
+#define HDMI_HEIGHT 1080
+static int pick_1080p_59_94_mode(drmModeConnector *connector, drmModeModeInfo *out_mode) {
+    for (int i = 0; i < connector->count_modes; ++i) {
+        drmModeModeInfo *mode = &connector->modes[i];
+        if (mode->hdisplay == HDMI_WIDTH && mode->vdisplay == HDMI_HEIGHT &&
+            (mode->vrefresh == 59 || mode->vrefresh == 60 || mode->vrefresh == 60000 / 1001)) {
+            *out_mode = *mode;
+            return i;
+        }
+    }
+
+    for (int i = 0; i < connector->count_modes; ++i) {
+        drmModeModeInfo *mode = &connector->modes[i];
+        if (mode->hdisplay == HDMI_WIDTH && mode->vdisplay == HDMI_HEIGHT) {
+            *out_mode = *mode;
+            return i;
+        }
+    }
+
+    return -1;
+}
+static drmModePlane *find_plane_with_format(int fd, drmModePlaneRes *plane_res, uint32_t format)
+{
+    for (uint32_t i = 0; i < plane_res->count_planes; ++i) {
+        drmModePlane *plane = drmModeGetPlane(fd, plane_res->planes[i]);
+        if (!plane) {
+            continue;
+        }
+
+        int has_format = 0;
+        for (uint32_t j = 0; j < (uint32_t)plane->count_formats; ++j) {
+            if (plane->formats[j] == format) {
+                has_format = 1;
+                break;
+            }
+        }
+
+        if (!has_format) {
+            drmModeFreePlane(plane);
+            continue;
+        }
+
+        return plane;
+    }
+
+    return NULL;
+}
+static int create_dumb_fb(int fd, uint32_t w, uint32_t h, uint32_t format,
+                         uint32_t *out_fb_id, void **out_mmap, uint32_t *out_handle)
+{
+    uint32_t bpp = (format == DRM_FORMAT_RGB565) ? 16 : 32;
+    uint32_t depth = (format == DRM_FORMAT_RGB565) ? 16 : 32;
+
+    struct drm_mode_create_dumb create = {
+        .width = w,
+        .height = h,
+        .bpp = bpp,
+        .flags = 0,
+    };
+
+    if (drmIoctl(fd, DRM_IOCTL_MODE_CREATE_DUMB, &create) != 0) {
+        fprintf(stderr, "DRM_IOCTL_MODE_CREATE_DUMB failed: %s\n", strerror(errno));
+        return -1;
+    }
+
+    struct drm_mode_map_dumb map = { .handle = create.handle };
+    if (drmIoctl(fd, DRM_IOCTL_MODE_MAP_DUMB, &map) != 0) {
+        fprintf(stderr, "DRM_IOCTL_MODE_MAP_DUMB failed: %s\n", strerror(errno));
+        struct drm_mode_destroy_dumb destroy = { .handle = create.handle };
+        drmIoctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
+        return -1;
+    }
+
+    void *ptr = mmap(NULL, create.size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, map.offset);
+    if (ptr == MAP_FAILED) {
+        fprintf(stderr, "mmap failed: %s\n", strerror(errno));
+        struct drm_mode_destroy_dumb destroy = { .handle = create.handle };
+        drmIoctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
+        return -1;
+    }
+
+    uint32_t fb_id = 0;
+    int ret = drmModeAddFB(fd, w, h, depth, bpp, create.pitch, create.handle, &fb_id);
+    if (ret != 0) {
+        fprintf(stderr, "drmModeAddFB failed: %d\n", ret);
+        munmap(ptr, create.size);
+        struct drm_mode_destroy_dumb destroy = { .handle = create.handle };
+        drmIoctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
+        return -1;
+    }
+
+    *out_fb_id = fb_id;
+    *out_mmap = ptr;
+    *out_handle = create.handle;
+    return (int)create.pitch;
+}
+
+static void destroy_dumb_fb(int fd, uint32_t fb_id, uint32_t handle)
+{
+    if (fb_id != 0) {
+        drmModeRmFB(fd, fb_id);
+    }
+    if (handle != 0) {
+        struct drm_mode_destroy_dumb destroy = { .handle = handle };
+        drmIoctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
+    }
+}
+
+static int drm_hdmi_planes_acquire(void) {
+    if (drm_hdmi_planes.fd >= 0) {
+        return 0;
+    }
+
+    int fd = open("/dev/dri/by-path/platform-axi:gpu-card", O_RDWR | O_CLOEXEC);
+    if (fd < 0) {
+        fprintf(stderr, "Unable to open HDMI: %s\n", strerror(errno));
+        return 1;
+    }
+
+    drmModeRes *res = drmModeGetResources(fd);
+    if (!res) {
+        fprintf(stderr, "drmModeGetResources failed: %s\n", strerror(errno));
+        close(fd);
+        return 1;
+    }
+    drmModeConnector *connector = NULL;
+    uint32_t connector_id = 0;
+    uint32_t crtc_id = 0;
+
+    for (int i = 0; i < res->count_connectors; ++i) {
+        drmModeConnector *c = drmModeGetConnector(fd, res->connectors[i]);
+        if (!c) {
+            continue;
+        }
+        if (c->connection == DRM_MODE_CONNECTED && c->connector_type == DRM_MODE_CONNECTOR_HDMIA) {
+            connector = c;
+            connector_id = c->connector_id;
+            break;
+        }
+
+        drmModeFreeConnector(c);
+    }
+
+    if (!connector) {
+        fprintf(stderr, "No HDMI-A connector found\n");
+        drmModeFreeResources(res);
+        close(fd);
+        return 1;
+    }
+
+    if (connector->encoder_id != 0) {
+        drmModeEncoder *encoder = drmModeGetEncoder(fd, connector->encoder_id);
+        if (encoder) {
+            crtc_id = encoder->crtc_id;
+            drmModeFreeEncoder(encoder);
+        }
+    }
+
+    if (crtc_id == 0 && res->count_crtcs > 0) {
+        crtc_id = res->crtcs[0];
+    }
+
+    drmModeModeInfo mode = {0};
+    if (pick_1080p_59_94_mode(connector, &mode) < 0) {
+        fprintf(stderr, "Could not find a 1920x1080@59.94 mode on the HDMI connector\n");
+        drmModeFreeConnector(connector);
+        drmModeFreeResources(res);
+        close(fd);
+        return 1;
+    }
+    uint32_t bg_fb_a = 0;
+    uint32_t bg_handle_a = 0;
+    void *bg_ptr_a = NULL;
+    if (create_dumb_fb(fd, HDMI_WIDTH, HDMI_HEIGHT, DRM_FORMAT_XRGB8888, &bg_fb_a, &bg_ptr_a, &bg_handle_a) < 0) {
+        fprintf(stderr, "Failed to allocate background framebuffers\n");
+        destroy_dumb_fb(fd, bg_fb_a, bg_handle_a);
+        drmModeFreeConnector(connector);
+        drmModeFreeResources(res);
+        close(fd);
+        return 1;
+    }
+    if (drmModeSetCrtc(fd, crtc_id, bg_fb_a, 0, 0, &connector_id, 1, &mode) != 0) {
+        fprintf(stderr, "drmModeSetCrtc failed: %s\n", strerror(errno));
+        destroy_dumb_fb(fd, bg_fb_a, bg_handle_a);
+        drmModeFreeConnector(connector);
+        drmModeFreeResources(res);
+        close(fd);
+        return 1;
+    }
+
+    drmModePlaneRes *plane_res = drmModeGetPlaneResources(fd);
+    if (!plane_res) {
+        fprintf(stderr, "drmModeGetPlaneResources failed: %s\n", strerror(errno));
+        drmModeFreeConnector(connector);
+        drmModeFreeResources(res);
+        close(fd);
+        return 1;
+    }
+
+    drmModePlane *video_plane = find_plane_with_format(fd, plane_res, DRM_FORMAT_RGB565);
+    drmModePlane *strap_plane = find_plane_with_format(fd, plane_res, DRM_FORMAT_ARGB8888);
+    if (!video_plane || !strap_plane) {
+        fprintf(stderr, "Could not find suitable RGB565 / ARGB8888 planes for this CRTC\n");
+        if (video_plane) drmModeFreePlane(video_plane);
+        if (strap_plane) drmModeFreePlane(strap_plane);
+        drmModeFreePlaneResources(plane_res);
+        drmModeFreeConnector(connector);
+        drmModeFreeResources(res);
+        close(fd);
+        return 1;
+    }
+    drm_hdmi_planes.fd = fd;
+    drm_hdmi_planes.crtc_id = crtc_id;
+    drm_hdmi_planes.fb_id = bg_fb_a;
+    drm_hdmi_planes.fb_handle = bg_handle_a;
+    drm_hdmi_planes.video_plane_id = video_plane->plane_id;
+    drm_hdmi_planes.strap_plane_id = strap_plane->plane_id;
+
+    fprintf(stdout, "Using HDMI-A connector %u, CRTC %u, mode %ux%u @ %d (%5.3lf) Hz\n",
+            connector_id, crtc_id, mode.hdisplay, mode.vdisplay, mode.vrefresh, mode.clock*1000./mode.htotal/mode.vscan);
+}
 static int drm_vec_plane_prepare_buffer(int index) {
     if (drm_vec_plane.fb_ids[index] != 0) {
         return 0;
@@ -256,26 +506,28 @@ static void overlay_teletext(uint8_t *argb, int field) {
     teletext_request_packets(cnt);
 }
 
-static int complete = 0;
+// static int complete = 0;
 static void page_flip_handler(int fd, unsigned int frame, unsigned int seconds, unsigned int useconds, void *data) {
     (void)fd;
     (void)frame;
     (void)seconds;
     (void)useconds;
-    complete = 1;
+    int *complete = data;
+    *complete = 1;
 }
-static void wait_for_flip() {
+static void wait_for_flip(int fd, int *complete) {
     drmEventContext event = {
         .version = DRM_EVENT_CONTEXT_VERSION,
         .page_flip_handler = page_flip_handler,
     };
-    struct pollfd pollfd = {drm_vec_plane.fd, POLLIN, 0};
-    complete = 0;
-    while (!complete) {
+    struct pollfd pollfd = {fd, POLLIN, 0};
+    *complete = 0;
+    while (!*complete) {
         if (poll(&pollfd, 1, -1) < 0) perror("poll DRM page flip");
-        if (drmHandleEvent(drm_vec_plane.fd, &event) < 0) perror("drmHandleEvent");
+        if (drmHandleEvent(fd, &event) < 0) perror("drmHandleEvent");
     }
 }
+static int vec_complete;
 static int drm_vec_plane_update_fb(const uint8_t *argb, unsigned width, unsigned height, int from_vlc) {
     if (!argb || width == 0 || height == 0) {
         return -1;
@@ -322,7 +574,7 @@ static int drm_vec_plane_update_fb(const uint8_t *argb, unsigned width, unsigned
 
     int ret = drmModePageFlip(drm_vec_plane.fd, drm_vec_plane.crtc_id,
                               drm_vec_plane.fb_ids[target_index],
-                        DRM_MODE_PAGE_FLIP_EVENT, 0);
+                        DRM_MODE_PAGE_FLIP_EVENT, &vec_complete);
     if (ret != 0) {
         fprintf(stderr, "drm-rp1-vec: drmModePageFlip failed: %d\n", ret);
         return -1;
@@ -378,7 +630,52 @@ static void *drm_vec_display_loop(void *unused) {
             last_report = now;
         }
         pthread_mutex_unlock(&display_mutex);
-       if (can_wait) wait_for_flip(); else usleep(5000);
+       if (can_wait) wait_for_flip(drm_vec_plane.fd, &vec_complete); else usleep(5000);
+    }
+    return NULL;
+}
+static void *drm_hdmi_display_loop(void *unused) {
+    (void)unused;
+    struct timespec last_report;
+    clock_gettime(CLOCK_MONOTONIC, &last_report);
+    uint64_t report_flips = 0;
+    uint64_t report_vlc = 0;
+    int hdmi_complete = 0;
+
+    for (;;) {
+        int can_wait = 0;
+        pthread_mutex_lock(&display_mutex);
+        if (display_thread_stop) {
+            pthread_mutex_unlock(&display_mutex);
+            break;
+        }
+        pthread_mutex_unlock(&display_mutex);
+
+        int ret = drmModePageFlip(drm_hdmi_planes.fd, drm_hdmi_planes.crtc_id,
+                             drm_hdmi_planes.fb_id, DRM_MODE_PAGE_FLIP_EVENT, &hdmi_complete);
+        if (ret != 0) {
+            fprintf(stderr, "drm-hdmi: drmModePageFlip failed: %d\n", ret);
+            perror("a");
+        }
+        if (ret == 0) {
+            display_flips++;
+            report_flips++;
+            can_wait = 1;
+        }
+
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        double elapsed = (double)(now.tv_sec - last_report.tv_sec) +
+                         (double)(now.tv_nsec - last_report.tv_nsec) / 1000000000.0;
+        if (elapsed >= 1.0) {
+                        printf("drm-hdmi: vlc fps=%.2f output fps=%.2f flips=%llu\n",
+                                     (double)report_vlc / elapsed,
+                   (double)report_flips / elapsed,
+                 (unsigned long long)display_flips);
+            report_flips = 0;
+            last_report = now;
+        }
+       if (can_wait) wait_for_flip(drm_hdmi_planes.fd, &hdmi_complete); else usleep(5000);
     }
     return NULL;
 }
@@ -468,6 +765,10 @@ void dispmanx_init(void) {
     if (drm_vec_plane_acquire() < 0) {
         return;
     }
+    if (drm_hdmi_planes_acquire() < 0) {
+        printf("HDMI init failed\n");
+        return;
+    }
     display_frame.pixels = malloc(COMPOSITE_FRAME_BYTES);
     if (!display_frame.pixels) {
         fprintf(stderr, "drm-rp1-vec: display buffer allocation failed\n");
@@ -485,6 +786,12 @@ void dispmanx_init(void) {
         return;
     }
     display_thread_running = 1;
+    if (pthread_create(&display_hdmi_thread, NULL, drm_hdmi_display_loop, NULL) != 0) {
+        fprintf(stderr, "drm-hdmi: display thread creation failed\n");
+        free(display_frame.pixels);
+        display_frame.pixels = NULL;
+        return;
+    }
 }
 
 void dispmanx_display_argb(const uint8_t *argb, unsigned width, unsigned height) {
@@ -561,7 +868,6 @@ void dispmanx_close(void) {
         close(drm_vec_plane.fd);
         drm_vec_plane.fd = -1;
         drm_vec_plane.crtc_id = 0;
-        drm_vec_plane.connector_id = 0;
         drm_vec_plane.active_fb_index = 0;
     }
 }
