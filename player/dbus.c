@@ -21,7 +21,6 @@ struct libvlc_frame_log {
    unsigned width;
    unsigned height;
    unsigned bytes;
-   unsigned char *buffer;
    unsigned plane_count;
    char chroma[5];
 };
@@ -49,8 +48,6 @@ static uint8_t preview[PREVIEW_W * PREVIEW_H];
 static void libvlc_log_cleanup(void *opaque) {
    struct libvlc_frame_log *frame = opaque;
    if (!frame) return;
-   // free(frame->buffer);
-   frame->buffer = NULL;
    frame->width = 0;
    frame->height = 0;
    frame->bytes = 0;
@@ -152,6 +149,20 @@ static unsigned libvlc_log_format(void **opaque, char *chroma,
    unsigned plane_count = 1;
    unsigned bpp = 4;
 
+   // HW HEVC decoder produces DPS8, but whatever I request from it, the result is failure
+   if (chroma && !strcmp(chroma, "DPS8")) {
+      // memcpy(chroma, "NV12", 4);
+      // *height = 1088;
+      // *width = 1632;
+      bpp = 1;
+      y_stride = 1632;// *width * bpp;
+      frame->bytes = (size_t)y_stride * *height;
+      pitches[0] = y_stride;
+      lines[0] = *height;
+      pitches[1] = y_stride;
+      lines[1] = *height / 2;
+      plane_count = 1;
+   } else
    if (chroma && (!strncmp(chroma, "YUYV", 4) || !strncmp(chroma, "UYVY", 4))) {
       bpp = 2;
       y_stride = *width * bpp;
@@ -187,40 +198,28 @@ static unsigned libvlc_log_format(void **opaque, char *chroma,
       frame->chroma[0] = '\0';
    }
 
-   // free(frame->buffer);
-   // frame->buffer = calloc(1, frame->bytes > 0 ? frame->bytes : 1);
-   hdmi_set_format(frame->width, frame->height);
-   frame->buffer = hdmi_get_frame();
-   if (!frame->buffer) {
-      fprintf(stderr, "libvlc: frame buffer alloc failed\n");
-      return 0;
-   }
-
    if (opaque) *opaque = frame;
    recalculate_geometry(frame);
-   printf("libvlc: format callback prepared %ux%u plane_count=%u bytes=%u\n",
-          frame->width, frame->height, frame->plane_count, frame->bytes);
+   printf("libvlc: format callback prepared %s %ux%u plane_count=%u bytes=%u\n",
+          chroma, frame->width, frame->height, frame->plane_count, frame->bytes);
    return 1;
 }
 
 static void *libvlc_log_lock(void *opaque, void **planes) {
    struct libvlc_frame_log *frame = opaque;
    if (!frame) return NULL;
-   if (!frame->buffer && frame->bytes > 0) {
-      frame->buffer = calloc(1, frame->bytes);
-   }
-   if (!planes) return frame;
+   uint8_t *buffer = hdmi_get_frame(frame->width, frame->height);
    for (int i = 0; i < 4; ++i) planes[i] = NULL;
-   if (frame->plane_count == 3 && frame->buffer) {
+   if (frame->plane_count == 3 && buffer) {
       unsigned uv_stride = (frame->width + 1U) / 2U;
       unsigned uv_lines = (frame->height + 1U) / 2U;
       unsigned y_size = frame->width * frame->height;
       unsigned uv_size = uv_stride * uv_lines;
-      planes[0] = frame->buffer;
+      planes[0] = buffer;
       planes[1] = (unsigned char *)planes[0] + y_size;
       planes[2] = (unsigned char *)planes[1] + uv_size;
    } else {
-      planes[0] = frame->buffer;
+      planes[0] = buffer;
    }
    return frame;
 }
@@ -231,6 +230,7 @@ static void libvlc_log_unlock(void *opaque, void *picture, void *const *planes) 
    if (!frame || !planes || !planes[0]) {
       return;
    }
+   hdmi_commit_frame();
 
    if (frame->plane_count == 1) {
       printf("libvlc: packed frame chroma=%s width=%u height=%u -> display directly\n",

@@ -40,6 +40,7 @@ static uint8_t strap_premultiplied[COMPOSITE_FRAME_W * COMPOSITE_FRAME_H * 4];
 
 struct dumb_buffer {
     void *mmap, *mmap_u, *mmap_v;
+    uint32_t w, h;
     uint32_t handle;
     uint32_t fb_id;
     uint32_t size;
@@ -63,7 +64,8 @@ struct drm_hdmi_planes {
     uint32_t crtc_id;
     struct dumb_buffer fb_buffer;
     uint32_t video_plane_id;
-    struct dumb_buffer video_buffer;
+    struct dumb_buffer video_buffers[3];
+    int active_video_buffer_index;
     uint32_t strap_plane_id;
     struct dumb_buffer strap_buffer;
 };
@@ -117,7 +119,10 @@ static void destroy_dumb_fb(int fd, struct dumb_buffer *b) {
     }
 }
 static int create_dumb_fb(int fd, uint32_t w, uint32_t h, uint32_t format, struct dumb_buffer *out) {
+    if (w == out->w && h == out->h && out->fb_id) return 0;
     destroy_dumb_fb(fd, out);
+    out->w = w;
+    out->h = h;
     int is_i420 = format == DRM_FORMAT_YUV420 || format == DRM_FORMAT_YVU420;
     if (is_i420 && ((w & 1U) || (h & 1U) || h > UINT32_MAX / 2U)) {
         fprintf(stderr, "I420 framebuffer dimensions must be even and fit the dumb-buffer height\n");
@@ -288,6 +293,30 @@ static int pick_1080p_59_94_mode(drmModeConnector *connector, drmModeModeInfo *o
 
     return -1;
 }
+uint64_t get_plane_type(int fd, uint32_t plane_id) {
+    uint64_t plane_type = -1;
+
+    // 1. Get all properties attached to this plane object
+    drmModeObjectPropertiesPtr props = drmModeObjectGetProperties(fd, plane_id, DRM_MODE_OBJECT_PLANE);
+    if (!props) return -1;
+
+    // 2. Loop through the properties to find the one named "type"
+    for (uint32_t i = 0; i < props->count_props; i++) {
+        drmModePropertyPtr prop = drmModeGetProperty(fd, props->props[i]);
+        if (!prop) continue;
+
+        if (strcmp(prop->name, "type") == 0) {
+            // The value is stored in the corresponding values array
+            plane_type = props->prop_values[i];
+            drmModeFreeProperty(prop);
+            break;
+        }
+        drmModeFreeProperty(prop);
+    }
+
+    drmModeFreeObjectProperties(props);
+    return plane_type;
+}
 static drmModePlane *find_plane_with_format(int fd, drmModePlaneRes *plane_res, uint32_t format)
 {
     for (uint32_t i = 0; i < plane_res->count_planes; ++i) {
@@ -295,6 +324,8 @@ static drmModePlane *find_plane_with_format(int fd, drmModePlaneRes *plane_res, 
         if (!plane) {
             continue;
         }
+        if (get_plane_type(fd, plane->plane_id) != DRM_PLANE_TYPE_OVERLAY) continue;
+        // if (plane->plane_id == 48 || plane->plane_id == 67) continue;
 
         int has_format = 0;
         for (uint32_t j = 0; j < (uint32_t)plane->count_formats; ++j) {
@@ -325,6 +356,8 @@ static int drm_hdmi_planes_acquire(void) {
         fprintf(stderr, "Unable to open HDMI: %s\n", strerror(errno));
         return 1;
     }
+    drmSetClientCap(fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
+    drmSetClientCap(fd, DRM_CLIENT_CAP_ATOMIC, 1);
 
     drmModeRes *res = drmModeGetResources(fd);
     if (!res) {
@@ -403,7 +436,7 @@ static int drm_hdmi_planes_acquire(void) {
         return 1;
     }
 
-    drmModePlane *video_plane = find_plane_with_format(fd, plane_res, DRM_FORMAT_RGB565);
+    drmModePlane *video_plane = find_plane_with_format(fd, plane_res, DRM_FORMAT_YUV420);
     drmModePlane *strap_plane = find_plane_with_format(fd, plane_res, DRM_FORMAT_ARGB8888);
     if (!video_plane || !strap_plane) {
         fprintf(stderr, "Could not find suitable RGB565 / ARGB8888 planes for this CRTC\n");
@@ -415,6 +448,7 @@ static int drm_hdmi_planes_acquire(void) {
         close(fd);
         return 1;
     }
+    printf("%d\n", video_plane->plane_id);
     drm_hdmi_planes.fd = fd;
     drm_hdmi_planes.crtc_id = crtc_id;
     drm_hdmi_planes.video_plane_id = video_plane->plane_id;
@@ -633,17 +667,96 @@ static void *drm_hdmi_display_loop(void *unused) {
     return NULL;
 }
 int hdmi_set_format(int w, int h) {
-    if (create_dumb_fb(drm_hdmi_planes.fd, w, h, DRM_FORMAT_YUV420, &drm_hdmi_planes.video_buffer) < 0) return -1;
-    if (drmModeSetPlane(drm_hdmi_planes.fd, drm_hdmi_planes.video_plane_id, drm_hdmi_planes.crtc_id,
-                     drm_hdmi_planes.video_buffer.fb_id, 0,
-                     0, 0, HDMI_WIDTH, HDMI_HEIGHT,
-                     0 << 16, 0 << 16, w << 16, h << 16) < 0) {
-        perror("drmModeSetPlane");
-    }
     return 0;
 }
-int8_t *hdmi_get_frame() {
-    return drm_hdmi_planes.video_buffer.mmap;
+int64_t get_us(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000000LL + ts.tv_nsec / 1000;
+}
+static uint32_t get_prop_id(int fd, uint32_t object_id,
+                            uint32_t object_type,
+                            const char *name)
+{
+    drmModeObjectProperties *props =
+        drmModeObjectGetProperties(fd, object_id, object_type);
+
+    for (uint32_t i = 0; i < props->count_props; i++) {
+        drmModePropertyRes *prop =
+            drmModeGetProperty(fd, props->props[i]);
+
+        if (!strcmp(prop->name, name)) {
+            uint32_t id = prop->prop_id;
+            drmModeFreeProperty(prop);
+            drmModeFreeObjectProperties(props);
+            return id;
+        }
+
+        drmModeFreeProperty(prop);
+    }
+
+    drmModeFreeObjectProperties(props);
+    printf("failed prop %s\n", name);
+    return 0;
+}
+int8_t *hdmi_get_frame(int w, int h) {
+    drm_hdmi_planes.active_video_buffer_index = (drm_hdmi_planes.active_video_buffer_index + 1) % 3;
+    if (create_dumb_fb(drm_hdmi_planes.fd, w, h, DRM_FORMAT_YUV420, &drm_hdmi_planes.video_buffers[drm_hdmi_planes.active_video_buffer_index]) < 0) return 0;
+    return drm_hdmi_planes.video_buffers[drm_hdmi_planes.active_video_buffer_index].mmap;
+}
+void hdmi_commit_frame() {
+    struct dumb_buffer *cb = &drm_hdmi_planes.video_buffers[drm_hdmi_planes.active_video_buffer_index];
+    uint64_t t0 = get_us();
+#if 0
+    if (drmModeSetPlane(drm_hdmi_planes.fd, drm_hdmi_planes.video_plane_id, drm_hdmi_planes.crtc_id,
+                     cb->fb_id, 0,
+                     0, 0, HDMI_WIDTH, HDMI_HEIGHT,
+                     0 << 16, 0 << 16, cb->w << 16, cb->h << 16) < 0) {
+        perror("drmModeSetPlane");
+    }
+#else
+drmModeAtomicReq *req = drmModeAtomicAlloc();
+uint32_t prop_fb_id   = get_prop_id(drm_hdmi_planes.fd, drm_hdmi_planes.video_plane_id,
+                                    DRM_MODE_OBJECT_PLANE, "FB_ID");
+uint32_t prop_crtc_id = get_prop_id(drm_hdmi_planes.fd, drm_hdmi_planes.video_plane_id,
+                                    DRM_MODE_OBJECT_PLANE, "CRTC_ID");
+uint32_t prop_crtc_x  = get_prop_id(drm_hdmi_planes.fd, drm_hdmi_planes.video_plane_id,
+                                    DRM_MODE_OBJECT_PLANE, "CRTC_X");
+uint32_t prop_crtc_y  = get_prop_id(drm_hdmi_planes.fd, drm_hdmi_planes.video_plane_id,
+                                    DRM_MODE_OBJECT_PLANE, "CRTC_Y");
+uint32_t prop_crtc_w  = get_prop_id(drm_hdmi_planes.fd, drm_hdmi_planes.video_plane_id,
+                                    DRM_MODE_OBJECT_PLANE, "CRTC_W");
+uint32_t prop_crtc_h  = get_prop_id(drm_hdmi_planes.fd, drm_hdmi_planes.video_plane_id,
+                                    DRM_MODE_OBJECT_PLANE, "CRTC_H");
+uint32_t prop_src_x   = get_prop_id(drm_hdmi_planes.fd, drm_hdmi_planes.video_plane_id,
+                                    DRM_MODE_OBJECT_PLANE, "SRC_X");
+uint32_t prop_src_y   = get_prop_id(drm_hdmi_planes.fd, drm_hdmi_planes.video_plane_id,
+                                    DRM_MODE_OBJECT_PLANE, "SRC_Y");
+uint32_t prop_src_w   = get_prop_id(drm_hdmi_planes.fd, drm_hdmi_planes.video_plane_id,
+                                    DRM_MODE_OBJECT_PLANE, "SRC_W");
+uint32_t prop_src_h   = get_prop_id(drm_hdmi_planes.fd, drm_hdmi_planes.video_plane_id,
+                                    DRM_MODE_OBJECT_PLANE, "SRC_H");
+int r0 = 0;
+r0 = drmModeAtomicAddProperty(req, drm_hdmi_planes.video_plane_id, prop_fb_id,   cb->fb_id);
+r0 = drmModeAtomicAddProperty(req, drm_hdmi_planes.video_plane_id, prop_crtc_id, drm_hdmi_planes.crtc_id);
+r0 = drmModeAtomicAddProperty(req, drm_hdmi_planes.video_plane_id, prop_crtc_x,  0);
+r0 = drmModeAtomicAddProperty(req, drm_hdmi_planes.video_plane_id, prop_crtc_y,  0);
+r0 = drmModeAtomicAddProperty(req, drm_hdmi_planes.video_plane_id, prop_crtc_w,  HDMI_WIDTH);
+r0 = drmModeAtomicAddProperty(req, drm_hdmi_planes.video_plane_id, prop_crtc_h,  HDMI_HEIGHT);
+r0 = drmModeAtomicAddProperty(req, drm_hdmi_planes.video_plane_id, prop_src_x,   0);
+r0 = drmModeAtomicAddProperty(req, drm_hdmi_planes.video_plane_id, prop_src_y,   0);
+r0 = drmModeAtomicAddProperty(req, drm_hdmi_planes.video_plane_id, prop_src_w,   cb->w << 16);
+r0 = drmModeAtomicAddProperty(req, drm_hdmi_planes.video_plane_id, prop_src_h,   cb->h << 16);
+
+int ret = drmModeAtomicCommit(drm_hdmi_planes.fd, req,
+                              DRM_MODE_ATOMIC_NONBLOCK,
+                              NULL);
+if (ret) {
+    perror("drmModeAtomicCommit");
+}
+drmModeAtomicFree(req);
+#endif
+    // printf("%5.2lf\n", (get_us() - t0)/1e3);
 }
 
 static int drm_vec_submit_frame(const uint8_t *argb, unsigned width,
@@ -752,12 +865,12 @@ void dispmanx_init(void) {
         return;
     }
     display_thread_running = 1;
-    if (pthread_create(&display_hdmi_thread, NULL, drm_hdmi_display_loop, NULL) != 0) {
-        fprintf(stderr, "drm-hdmi: display thread creation failed\n");
-        free(display_frame.pixels);
-        display_frame.pixels = NULL;
-        return;
-    }
+    // if (pthread_create(&display_hdmi_thread, NULL, drm_hdmi_display_loop, NULL) != 0) {
+    //     fprintf(stderr, "drm-hdmi: display thread creation failed\n");
+    //     free(display_frame.pixels);
+    //     display_frame.pixels = NULL;
+    //     return;
+    // }
 }
 
 void dispmanx_display_argb(const uint8_t *argb, unsigned width, unsigned height) {
