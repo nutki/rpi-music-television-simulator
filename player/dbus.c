@@ -49,7 +49,7 @@ static uint8_t preview[PREVIEW_W * PREVIEW_H];
 static void libvlc_log_cleanup(void *opaque) {
    struct libvlc_frame_log *frame = opaque;
    if (!frame) return;
-   free(frame->buffer);
+   // free(frame->buffer);
    frame->buffer = NULL;
    frame->width = 0;
    frame->height = 0;
@@ -187,8 +187,10 @@ static unsigned libvlc_log_format(void **opaque, char *chroma,
       frame->chroma[0] = '\0';
    }
 
-   free(frame->buffer);
-   frame->buffer = calloc(1, frame->bytes > 0 ? frame->bytes : 1);
+   // free(frame->buffer);
+   // frame->buffer = calloc(1, frame->bytes > 0 ? frame->bytes : 1);
+   hdmi_set_format(frame->width, frame->height);
+   frame->buffer = hdmi_get_frame();
    if (!frame->buffer) {
       fprintf(stderr, "libvlc: frame buffer alloc failed\n");
       return 0;
