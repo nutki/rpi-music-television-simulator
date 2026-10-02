@@ -62,6 +62,7 @@ struct drm_vec_plane {
 
 struct drm_hdmi_planes {
     int fd;
+    int active;
     uint32_t crtc_id;
     struct dumb_buffer fb_buffer;
     uint32_t video_plane_id;
@@ -502,6 +503,7 @@ static int drm_hdmi_planes_acquire(void) {
     }
     drm_hdmi_planes.fd = fd;
     drm_hdmi_planes.crtc_id = crtc_id;
+    drm_hdmi_planes.active = 1;
 
     fprintf(stdout, "Using HDMI-A connector %u, CRTC %u, mode %s %ux%u @ %d (%5.3lf) Hz\n",
             connector_id, crtc_id, mode.name, mode.hdisplay, mode.vdisplay, mode.vrefresh, mode.clock*1000./mode.htotal/mode.vtotal);
@@ -668,6 +670,7 @@ static void *drm_vec_display_loop(void *unused) {
     return NULL;
 }
 void hdmi_load_strap(uint8_t *ptr) {
+   if (!drm_hdmi_planes.active) return;
    memcpy(drm_hdmi_planes.strap_buffer.mmap, ptr, HDMI_HEIGHT * HDMI_WIDTH * 4);
 }
 static struct { int sw, sh, sx, sy, dw, dh, dx, dy; } hdg;
@@ -681,6 +684,17 @@ int64_t get_us(void) {
     return (int64_t)ts.tv_sec * 1000000LL + ts.tv_nsec / 1000;
 }
 int8_t *hdmi_get_frame(int w, int h) {
+    if (!drm_hdmi_planes.active) {
+        static int8_t *dummy_frame = 0;
+        static uint32_t frame_size = 0;
+        uint32_t size = w * h * 3 / 2;
+        if (size > frame_size) {
+            free(dummy_frame);
+            frame_size = size;
+            dummy_frame = malloc(size);
+        }
+        return dummy_frame;
+    }
     drm_hdmi_planes.active_video_buffer_index = (drm_hdmi_planes.active_video_buffer_index + 1) % 3;
     if (create_dumb_fb(drm_hdmi_planes.fd, w, h, DRM_FORMAT_YUV420, &drm_hdmi_planes.video_buffers[drm_hdmi_planes.active_video_buffer_index]) < 0) return 0;
     return drm_hdmi_planes.video_buffers[drm_hdmi_planes.active_video_buffer_index].mmap;
@@ -708,11 +722,13 @@ static void hdmi_atomic_commit(uint32_t fb_id,
     drmModeAtomicFree(req);
 }
 void hdmi_commit_frame() {
+    if (!drm_hdmi_planes.active) return;
     struct dumb_buffer *cb = &drm_hdmi_planes.video_buffers[drm_hdmi_planes.active_video_buffer_index];
     uint32_t alpha =  drm_vec_plane.strap_alpha > 0 ?  drm_vec_plane.strap_alpha << 8 : 0;
     hdmi_atomic_commit(cb->fb_id, hdg.dx, hdg.dy, hdg.dw, hdg.dh, hdg.sx, hdg.sy, hdg.sw, hdg.sh, alpha, DRM_MODE_ATOMIC_NONBLOCK);
 }
 void hdmi_bg_mode(int mode) {
+    if (!drm_hdmi_planes.active) return;
     if (mode == 2) {
         int w = drm_hdmi_planes.noise_buffer.w / 2, h = drm_hdmi_planes.noise_buffer.h / 2;
         hdmi_atomic_commit(drm_hdmi_planes.noise_buffer.fb_id, 0, 0, HDMI_WIDTH, HDMI_HEIGHT, rand() % w, rand() % h, w, h, 0, 0);
@@ -932,7 +948,8 @@ void osd_text(const char *c, int align) {
     osd_render_pixels = (uint32_t *)drm_vec_plane.osd_source;
     render_text(c, drm_vec_plane_put_osd_pixel, OSD_WIDTH);
     osd_render_pixels = NULL;
-    memcpy(drm_hdmi_planes.osd_buffer.mmap, drm_vec_plane.osd_source, OSD_WIDTH * OSD_HEIGHT * 4);
+    if (drm_hdmi_planes.active)
+        memcpy(drm_hdmi_planes.osd_buffer.mmap, drm_vec_plane.osd_source, OSD_WIDTH * OSD_HEIGHT * 4);
 
     int ret = ARGBScale(drm_vec_plane.osd_source, OSD_WIDTH * 4,
                         OSD_WIDTH, OSD_HEIGHT,
