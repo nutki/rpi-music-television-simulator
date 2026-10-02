@@ -122,6 +122,12 @@ static void recalculate_geometry(struct libvlc_frame_log *frame) {
    get_target_geometry(PREVIEW_W, PREVIEW_H, 16, 9,
          &target_aspect_pw, &target_aspect_ph,
          &target_offset_pw, &target_offset_ph);
+   unsigned int hdmi_w, hdmi_h, hdmi_x, hdmi_y;
+   get_target_geometry(HDMI_WIDTH, HDMI_HEIGHT, 16, 9,
+         &hdmi_w, &hdmi_h,
+         &hdmi_x, &hdmi_y);
+   hdmi_set_geometry(effective_wcrop_w, effective_wcrop_h, effective_wcrop_x, effective_wcrop_y,
+      hdmi_w, hdmi_h, hdmi_x, hdmi_y);
    if (target_aspect_w < target_w || target_aspect_h < target_h) dirty_buffers = 1;
    if (target_aspect_pw < PREVIEW_W || target_aspect_ph < PREVIEW_H) dirty_preview_buffers = 1;
    printf("%d %d %d %d %d\n", source_h, effective_crop_y, effective_crop_h, target_aspect_h, target_offset_h);
