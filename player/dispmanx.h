@@ -5,7 +5,7 @@ void dispmanx_alpha(int a);
 void blank_background();
 void dispmanx_close();
 void dispmanx_display_argb(const uint8_t *argb, unsigned width, unsigned height);
-int hdmi_set_geometry(int sw, int sh, int sx, int sy, int dw, int dh, int dx, int dy);
+void hdmi_set_geometry(int sw, int sh, int sx, int sy, int dw, int dh, int dx, int dy);
 int8_t *hdmi_get_frame(int w, int h);
 void hdmi_commit_frame(void);
 #define HDMI_WIDTH 1920
