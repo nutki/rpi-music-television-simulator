@@ -46,6 +46,7 @@ struct dumb_buffer {
     uint32_t fb_id;
     uint32_t size;
     uint32_t pitch, pitchuv;
+    uint32_t format;
 };
 
 struct drm_vec_plane {
@@ -132,11 +133,13 @@ static void destroy_dumb_fb(int fd, struct dumb_buffer *b) {
     }
 }
 static int create_dumb_fb(int fd, uint32_t w, uint32_t h, uint32_t format, struct dumb_buffer *out) {
-    if (w == out->w && h == out->h && out->fb_id) return 0;
+    if (w == out->w && h == out->h && format == out->format && out->fb_id) return 0;
     destroy_dumb_fb(fd, out);
     out->w = w;
     out->h = h;
-    int is_i420 = format == DRM_FORMAT_YUV420 || format == DRM_FORMAT_YVU420;
+    out->format = format;
+    int is_i420 = format == DRM_FORMAT_YUV420 || format == DRM_FORMAT_YVU420 || format == DRM_FORMAT_NV12;
+    int is_nv12 = format == DRM_FORMAT_NV12;
     if (is_i420 && ((w & 1U) || (h & 1U) || h > UINT32_MAX / 2U)) {
         fprintf(stderr, "I420 framebuffer dimensions must be even and fit the dumb-buffer height\n");
         return -1;
@@ -163,7 +166,11 @@ static int create_dumb_fb(int fd, uint32_t w, uint32_t h, uint32_t format, struc
     uint32_t handles[4] = { create.handle, 0, 0, 0 };
     uint32_t pitches[4] = { create.pitch, 0, 0, 0 };
     uint32_t offsets[4] = { 0, 0, 0, 0 };
-    if (is_i420) {
+    if (is_nv12) {
+        pitches[1] = out->pitchuv = create.pitch;
+        handles[1] = create.handle;
+        offsets[1] = create.pitch * h;
+    } else if (is_i420) {
         pitches[1] = pitches[2] = out->pitchuv = create.pitch / 2U;
         handles[1] = handles[2] = create.handle;
         offsets[1] = offsets[2] = create.pitch * h;
@@ -683,7 +690,7 @@ int64_t get_us(void) {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (int64_t)ts.tv_sec * 1000000LL + ts.tv_nsec / 1000;
 }
-int8_t *hdmi_get_frame(int w, int h) {
+int8_t *hdmi_get_frame(int w, int h, int planes) {
     if (!drm_hdmi_planes.active) {
         static int8_t *dummy_frame = 0;
         static uint32_t frame_size = 0;
@@ -696,7 +703,7 @@ int8_t *hdmi_get_frame(int w, int h) {
         return dummy_frame;
     }
     drm_hdmi_planes.active_video_buffer_index = (drm_hdmi_planes.active_video_buffer_index + 1) % 3;
-    if (create_dumb_fb(drm_hdmi_planes.fd, w, h, DRM_FORMAT_YUV420, &drm_hdmi_planes.video_buffers[drm_hdmi_planes.active_video_buffer_index]) < 0) return 0;
+    if (create_dumb_fb(drm_hdmi_planes.fd, w, h, planes == 3 ? DRM_FORMAT_YUV420 : DRM_FORMAT_NV12, &drm_hdmi_planes.video_buffers[drm_hdmi_planes.active_video_buffer_index]) < 0) return 0;
     return drm_hdmi_planes.video_buffers[drm_hdmi_planes.active_video_buffer_index].mmap;
 }
 static void hdmi_atomic_commit(uint32_t fb_id,

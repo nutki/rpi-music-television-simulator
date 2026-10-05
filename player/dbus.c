@@ -147,6 +147,10 @@ static unsigned libvlc_log_format(void **opaque, char *chroma,
    if (!width || !height || !pitches || !lines) {
       return 1;
    }
+   uint32_t visible_width = 0, visible_height = 0;
+   if (vlc_player && !libvlc_video_get_size(vlc_player, 0, &visible_width, &visible_height)) {
+      printf("libvlc: visible %ux%u\n", visible_width, visible_height);
+   }
 
    unsigned y_stride = 0;
    unsigned uv_stride = 0;
@@ -155,20 +159,12 @@ static unsigned libvlc_log_format(void **opaque, char *chroma,
    unsigned plane_count = 1;
    unsigned bpp = 4;
 
-   // HW HEVC decoder produces DPS8, but whatever I request from it, the result is failure
+   // HW HEVC decoder produces DPS8, not possible to accept it directly
+   // needs patched vlc main code forces avcodec-hw=none
    if (chroma && !strcmp(chroma, "DPS8")) {
-      // memcpy(chroma, "NV12", 4);
-      // *height = 1088;
-      // *width = 1632;
-      bpp = 1;
-      y_stride = 1632;// *width * bpp;
-      frame->bytes = (size_t)y_stride * *height;
-      pitches[0] = y_stride;
-      lines[0] = *height;
-      pitches[1] = y_stride;
-      lines[1] = *height / 2;
-      plane_count = 1;
-   } else
+      memcpy(chroma, "NV12", 4);
+      // memcpy(chroma, "I420", 4);
+   }
    if (chroma && (!strncmp(chroma, "YUYV", 4) || !strncmp(chroma, "UYVY", 4))) {
       bpp = 2;
       y_stride = *width * bpp;
@@ -186,6 +182,16 @@ static unsigned libvlc_log_format(void **opaque, char *chroma,
       pitches[2] = uv_stride;
       lines[2] = uv_lines;
       plane_count = 3;
+      bpp = 1;
+   } else if (chroma && !strncmp(chroma, "NV12", 4)) {
+      y_stride = *width;
+      uv_stride = (*width + 1U) / 2U * 2U;
+      frame->bytes = (size_t)y_stride * *height + (size_t)uv_stride * uv_lines;
+      pitches[0] = y_stride;
+      lines[0] = *height;
+      pitches[1] = uv_stride;
+      lines[1] = uv_lines;
+      plane_count = 2;
       bpp = 1;
    } else {
       y_stride = *width * bpp;
@@ -214,7 +220,7 @@ static unsigned libvlc_log_format(void **opaque, char *chroma,
 static void *libvlc_log_lock(void *opaque, void **planes) {
    struct libvlc_frame_log *frame = opaque;
    if (!frame) return NULL;
-   uint8_t *buffer = hdmi_get_frame(frame->width, frame->height);
+   uint8_t *buffer = hdmi_get_frame(frame->width, frame->height, frame->plane_count);
    for (int i = 0; i < 4; ++i) planes[i] = NULL;
    if (frame->plane_count == 3 && buffer) {
       unsigned uv_stride = (frame->width + 1U) / 2U;
@@ -224,6 +230,10 @@ static void *libvlc_log_lock(void *opaque, void **planes) {
       planes[0] = buffer;
       planes[1] = (unsigned char *)planes[0] + y_size;
       planes[2] = (unsigned char *)planes[1] + uv_size;
+   } else if (frame->plane_count == 2 && buffer) {
+      unsigned y_size = frame->width * frame->height;
+      planes[0] = buffer;
+      planes[1] = (unsigned char *)planes[0] + y_size;
    } else {
       planes[0] = buffer;
    }
@@ -244,19 +254,19 @@ static void libvlc_log_unlock(void *opaque, void *picture, void *const *planes) 
       return;
    }
 
-   if (!planes[1] || !planes[2] || frame->plane_count != 3) {
+   if ((!planes[1] || !planes[2] || frame->plane_count != 3) && (!planes[1] || frame->plane_count != 2)) {
       return;
    }
 
    unsigned target_y_stride = target_w;
-   unsigned target_uv_stride = (target_w + 1u)/2u;
+   unsigned target_uv_stride = (target_w + 1u)/2u * (frame->plane_count == 3 ? 1 : 2);
    unsigned target_uv_h = (target_h + 1u)/2u;
    static uint8_t tmp_buf[822 * 576 * 4], rgb_buffer[822 * 576 * 4];
    //uint8_t tmp_buf[target_y_stride * target_h + target_uv_stride * target_uv_h * 2];
    uint8_t *tmp_y = tmp_buf, *tmp_u = tmp_y + target_y_stride * target_h, *tmp_v = tmp_u + target_uv_stride * target_uv_h;
    //uint32_t rgb_buffer[target_w * target_h * 10];
    unsigned y_stride = frame->width;
-   unsigned uv_stride = (frame->width + 1U) / 2U;
+   unsigned uv_stride = (frame->width + 1U) / 2U * (frame->plane_count == 3 ? 1 : 2);
    unsigned target_stride = target_w * 4U;
    if (dirty_buffers) {
       dirty_buffers = 0;
@@ -271,7 +281,20 @@ static void libvlc_log_unlock(void *opaque, void *picture, void *const *planes) 
       preview + PREVIEW_W * target_offset_ph, PREVIEW_W,
       target_aspect_pw, target_aspect_ph, kFilterBilinear);
    preview_shm_publish(preview, target_aspect_pw);
-   int r1 = I420Scale((const uint8_t *)planes[0] + effective_crop_x + effective_crop_y * y_stride, y_stride,
+   if (frame->plane_count == 2) {
+      // printf("%dx%d + %d,%d (strides: %d,%d)\n", effective_crop_w, effective_crop_h, effective_crop_x, effective_crop_y, y_stride, uv_stride);
+      NV12Scale((const uint8_t *)planes[0] + effective_crop_x + effective_crop_y * y_stride, y_stride,
+                      (const uint8_t *)planes[1] + effective_crop_x + effective_crop_y/2 * uv_stride, uv_stride,
+                      effective_crop_w, effective_crop_h,
+                      tmp_y, target_y_stride,
+                      tmp_u, target_uv_stride,
+                      target_aspect_w, target_aspect_h, kFilterBilinear);
+      NV12ToARGB(tmp_y, target_y_stride,
+                        tmp_u, target_uv_stride,
+                        rgb_buffer + target_stride * target_offset_h + target_offset_w * 4, target_stride,
+                        (int)target_aspect_w, (int)target_aspect_h);
+   } else {
+      I420Scale((const uint8_t *)planes[0] + effective_crop_x + effective_crop_y * y_stride, y_stride,
                       (const uint8_t *)planes[1] + effective_crop_x/2 + effective_crop_y/2 * uv_stride, uv_stride,
                       (const uint8_t *)planes[2] + effective_crop_x/2 + effective_crop_y/2 * uv_stride, uv_stride,
                       effective_crop_w, effective_crop_h,
@@ -279,12 +302,13 @@ static void libvlc_log_unlock(void *opaque, void *picture, void *const *planes) 
                       tmp_u, target_uv_stride,
                       tmp_v, target_uv_stride,
                       target_aspect_w, target_aspect_h, kFilterBilinear);
-   int ret = I420ToARGB(tmp_y, target_y_stride,
+      I420ToARGB(tmp_y, target_y_stride,
                         tmp_u, target_uv_stride,
                         tmp_v, target_uv_stride,
                         rgb_buffer + target_stride * target_offset_h + target_offset_w * 4, target_stride,
                         (int)target_aspect_w, (int)target_aspect_h);
-   if (ret == 0) {
+   }
+   if (1) {
       // printf("libvlc: converted %ux%u %s frame to ARGB via libyuv\n",
       //        frame->width, frame->height, frame->chroma[0] ? frame->chroma : "I420");
      if (stop_requested) {
