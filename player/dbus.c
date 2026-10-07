@@ -20,6 +20,7 @@ static libvlc_equalizer_t *equalizer;
 struct libvlc_frame_log {
    unsigned width;
    unsigned height;
+   unsigned visible_width, visible_height;
    unsigned bytes;
    unsigned plane_count;
    char chroma[5];
@@ -50,6 +51,8 @@ static void libvlc_log_cleanup(void *opaque) {
    if (!frame) return;
    frame->width = 0;
    frame->height = 0;
+   frame->visible_width = 0;
+   frame->visible_height = 0;
    frame->bytes = 0;
    frame->plane_count = 0;
    frame->chroma[0] = '\0';
@@ -107,8 +110,8 @@ static void get_source_geometry(int source_w, int source_h,
    }
 }
 static void recalculate_geometry(struct libvlc_frame_log *frame) {
-   unsigned source_w = frame->width;
-   unsigned source_h = frame->height;
+   unsigned source_w = frame->visible_width;
+   unsigned source_h = frame->visible_height;
    if (!source_w || !source_h) return;
    get_source_geometry(source_w, source_h, 4, 3,
          &effective_crop_x, &effective_crop_y,
@@ -151,6 +154,8 @@ static unsigned libvlc_log_format(void **opaque, char *chroma,
    if (vlc_player && !libvlc_video_get_size(vlc_player, 0, &visible_width, &visible_height)) {
       printf("libvlc: visible %ux%u\n", visible_width, visible_height);
    }
+   if (!visible_height || visible_height > *height) visible_height = *height;
+   if (!visible_width || visible_width > *width) visible_width = *width;
 
    unsigned y_stride = 0;
    unsigned uv_stride = 0;
@@ -202,6 +207,8 @@ static unsigned libvlc_log_format(void **opaque, char *chroma,
 
    frame->width = *width;
    frame->height = *height;
+   frame->visible_width = visible_width;
+   frame->visible_height = visible_height;
    frame->plane_count = plane_count;
    if (chroma) {
       memcpy(frame->chroma, chroma, 4);
@@ -239,7 +246,6 @@ static void *libvlc_log_lock(void *opaque, void **planes) {
    }
    return frame;
 }
-
 static void libvlc_log_unlock(void *opaque, void *picture, void *const *planes) {
    (void)picture;
    struct libvlc_frame_log *frame = opaque;
