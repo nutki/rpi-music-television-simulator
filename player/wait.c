@@ -701,6 +701,11 @@ void handle_keycode(int keycode) {
     if (keycode == 'q') {
       signalHandler(0);
     }
+#if defined(USE_LIBVLC)
+    if (keycode == '!') sdtv_mode(0);
+    if (keycode == '@') sdtv_mode(1);
+    if (keycode == '#') sdtv_mode(2);
+#endif
 }
 void process_input(void) {
   int keycode = 0;

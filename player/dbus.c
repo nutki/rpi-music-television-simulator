@@ -26,6 +26,7 @@ struct libvlc_frame_log {
    char chroma[5];
 };
 
+int current_sdtv_mode = 2;
 static int fill_frame = 0;
 static int crop_x = -1, crop_y = -1, crop_w = -1, crop_h = -1;
 static struct libvlc_frame_log libvlc_frame_log = { 0 };
@@ -287,6 +288,7 @@ static void libvlc_log_unlock(void *opaque, void *picture, void *const *planes) 
       preview + PREVIEW_W * target_offset_ph, PREVIEW_W,
       target_aspect_pw, target_aspect_ph, kFilterBilinear);
    preview_shm_publish(preview, target_aspect_pw);
+   if (current_sdtv_mode != 2) return;
    if (frame->plane_count == 2) {
       // printf("%dx%d + %d,%d (strides: %d,%d)\n", effective_crop_w, effective_crop_h, effective_crop_x, effective_crop_y, y_stride, uv_stride);
       NV12Scale((const uint8_t *)planes[0] + effective_crop_x + effective_crop_y * y_stride, y_stride,
@@ -475,6 +477,10 @@ int64_t dbus_aspect_mode(const char *mode) {
    fill_frame = strcmp(mode, "fill") == 0;
    recalculate_geometry(&libvlc_frame_log);
    return 0;
+}
+
+void sdtv_mode(int mode) {
+   current_sdtv_mode = mode;
 }
 
 #else

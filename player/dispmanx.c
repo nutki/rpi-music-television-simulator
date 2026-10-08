@@ -116,6 +116,7 @@ static int display_thread_running;
 static int display_thread_stop;
 static uint64_t vlc_submitted;
 static uint64_t display_flips;
+extern int current_sdtv_mode;
 
 static void destroy_dumb_fb(int fd, struct dumb_buffer *b) {
     if (b->mmap) {
@@ -571,6 +572,8 @@ static void wait_for_flip(int fd) {
     }
 }
 static int drm_vec_plane_update_fb(const uint8_t *argb, unsigned width, unsigned height, int from_vlc) {
+    static int need_blank_screen = 0;
+    if (current_sdtv_mode == 0 && need_blank_screen == 0) return -1;
     if (!argb || width == 0 || height == 0) {
         return -1;
     }
@@ -587,6 +590,13 @@ static int drm_vec_plane_update_fb(const uint8_t *argb, unsigned width, unsigned
     uint8_t *pixels = drm_vec_plane.fbs[target_index].mmap;
     uint8_t *frame_pixels = pixels + TELETEXT_OFFSET_Y * pitch;
 
+    if (current_sdtv_mode < 2) {
+        if (need_blank_screen) {
+            memset(pixels, 0, drm_vec_plane.fbs[target_index].size);
+            need_blank_screen--;
+        }
+    } else {
+    need_blank_screen = 2;
     if (drm_vec_plane.strap_alpha > 0 && from_vlc) {
         int blend_ret = ARGBBlend(strap_premultiplied,
                                   COMPOSITE_FRAME_W * 4,
@@ -611,6 +621,7 @@ static int drm_vec_plane_update_fb(const uint8_t *argb, unsigned width, unsigned
             fprintf(stderr, "drm-rp1-vec: OSD blend failed: %d\n", blend_ret);
             return -1;
         }
+    }
     }
     overlay_teletext(pixels, target_index);
 

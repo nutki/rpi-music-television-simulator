@@ -18,4 +18,5 @@ int64_t dbus_aspect_mode(const char *s);
 #ifdef USE_LIBVLC
 int libvlc_open_file(const char *path, int64_t start_ms);
 int libvlc_player_has_ended(void);
+void sdtv_mode(int mode);
 #endif
