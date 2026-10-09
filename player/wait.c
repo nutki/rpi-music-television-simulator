@@ -601,6 +601,22 @@ void seek_video(int s) {
   sprintf(buf, "SEEK %ds: (%d:%02d/%d:%02d)", s, pos / 60, pos % 60, len / 60, len %60);
   osd_show(buf);
 }
+int start_crop_detect(void) {
+  char *f = channel_current_entry()->path;
+  int cpid = fork();
+  if (cpid == -1) {
+    perror("fork");
+    cpid = 0;
+    return -1;
+  }
+  if (cpid == 0) {
+    execlp("node", "node", "webserver/crop_detect.js", f, 0);
+    perror("exec node\n");
+    exit(EXIT_FAILURE);
+  }
+  osd_show("CROP DETECT");
+  return 0;
+}
 int start_volume_detect(void) {
   char *f = channel_current_entry()->path;
   int cpid = fork();
@@ -679,6 +695,7 @@ void handle_keycode(int keycode) {
       if (keycode == 'c') {
         crop_cycle();
       }
+      if (keycode == 'C') start_crop_detect();
       if (keycode == 'x') {
         aspect_mode = !aspect_mode;
         dbus_aspect_mode(aspect_mode ? "fill" : "letterbox");
@@ -731,6 +748,11 @@ void process_input(void) {
     }
     if (msg[0] == 'V') {
       set_video_volume(atoi(msg + 1), true);
+    }
+    if (msg[0] == 'B') {
+      sscanf(msg, "B%d:%d:%d:%d", &crop_w, &crop_h, &crop_x, &crop_y);
+      osd_show(msg + 1);
+      dbus_crop(0, 0, crop_w + crop_x, crop_h + crop_y);
     }
   }
 }
